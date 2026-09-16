@@ -123,6 +123,44 @@ test('simplifyLoop removes staircase jitter from a diagonal edge', () => {
   assert.ok(simplified.length < staircase.length / 3, `expected heavy reduction, got ${simplified.length}`);
 });
 
+test('findCorners sees a corner that smoothing has bevelled', () => {
+  // A 90 degree corner rendered as two 45 degree turns, which is exactly what
+  // smoothing plus simplification produces from a pixel outline.
+  const bevelled: Vec[] = [
+    { x: 0, y: 0 }, { x: 60, y: 0 }, { x: 61, y: 1 },
+    { x: 61, y: 40 }, { x: 60, y: 41 }, { x: 0, y: 41 },
+  ];
+  // Indices 1-4 form the two bevels; 0 and 5 are ordinary sharp corners.
+  const immediate = findCorners(bevelled, Math.PI / 3, 0);
+  assert.deepEqual(immediate, [0, 5], 'immediate neighbours see only 45 degrees at a bevel');
+  // Measuring across the bevel recovers the full turn at every vertex.
+  const windowed = findCorners(bevelled, Math.PI / 3);
+  for (const index of [1, 2, 3, 4]) {
+    assert.ok(windowed.includes(index), `vertex ${index} of the bevel should be a corner`);
+  }
+});
+
+test('traceImage keeps a rectangle rectangular', () => {
+  // Regression: a missed corner let the curve fit bridge two edges, which
+  // inflated the shape well beyond its true bounds.
+  const image = makeImage(200, 120, (x, y) =>
+    x >= 30 && x < 170 && y >= 40 && y < 90 ? [40, 60, 110, 255] : [240, 238, 230, 255]);
+  const result = traceImage(image, { maxColors: 2, minArea: 50, simplifyTolerance: 0.6, fitTolerance: 0.8 });
+  const box = result.nodes.find(
+    (n) => n.fill.paint.type === 'solid' && n.fill.paint.color.r < 120,
+  )!;
+  assert.ok(box, 'the rectangle should be traced');
+  const bounds = P.bounds(box.path)!;
+  assert.ok(Math.abs(bounds.x - 30) < 1.5, `x ${bounds.x}`);
+  assert.ok(Math.abs(bounds.y - 40) < 1.5, `y ${bounds.y}`);
+  assert.ok(Math.abs(bounds.width - 140) < 1.5, `width ${bounds.width}`);
+  assert.ok(Math.abs(bounds.height - 50) < 1.5, `height ${bounds.height}`);
+  // The corners must stay square, so the whole box is filled.
+  for (const [x, y] of [[32, 42], [167, 42], [167, 87], [32, 87]]) {
+    assert.ok(P.containsPoint(box.path, { x, y }), `corner (${x},${y}) should be inside`);
+  }
+});
+
 test('findCorners flags right angles but not gentle curves', () => {
   const square: Vec[] = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }];
   assert.equal(findCorners(square, Math.PI / 3).length, 4);

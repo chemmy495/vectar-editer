@@ -71,14 +71,36 @@ export function simplifyLoop(points: readonly Vec[], tolerance: number): Vec[] {
   return merged.length >= 3 ? merged : points.slice();
 }
 
-/** Turn angle in radians at vertex `i` of a closed loop; 0 means straight on. */
-export function turnAngle(points: readonly Vec[], index: number): number {
+/**
+ * Turn angle in radians at vertex `index` of a closed loop, measured across a
+ * neighbourhood roughly `window` units long on each side.
+ *
+ * The window matters: smoothing and simplification turn a sharp 90 degree
+ * corner into a short bevel of two 45 degree turns, and looking only at the
+ * immediate neighbours would see neither as a corner. Measuring across the
+ * bevel recovers the full turn.
+ */
+export function turnAngle(points: readonly Vec[], index: number, window = 0): number {
   const n = points.length;
-  const previous = points[(index - 1 + n) % n];
+  if (n < 3) return 0;
+  const maxSteps = Math.max(1, Math.floor(n / 3));
+
+  /** Walks `direction` from `index` until `window` units have been covered. */
+  const reach = (direction: 1 | -1): Vec => {
+    let travelled = 0;
+    let current = index;
+    for (let step = 0; step < maxSteps; step++) {
+      const next = (current + direction + n) % n;
+      travelled += Math.hypot(points[next].x - points[current].x, points[next].y - points[current].y);
+      current = next;
+      if (travelled >= window) break;
+    }
+    return points[current];
+  };
+
   const current = points[index];
-  const next = points[(index + 1) % n];
-  const incoming = sub(current, previous);
-  const outgoing = sub(next, current);
+  const incoming = sub(current, reach(-1));
+  const outgoing = sub(reach(1), current);
   const lengths = Math.hypot(incoming.x, incoming.y) * Math.hypot(outgoing.x, outgoing.y);
   if (lengths === 0) return 0;
   const cos = (incoming.x * outgoing.x + incoming.y * outgoing.y) / lengths;
@@ -87,12 +109,14 @@ export function turnAngle(points: readonly Vec[], index: number): number {
 
 /**
  * Indices of vertices whose turn is sharper than `thresholdRadians`. These are
- * kept as hard corners when curves are fitted.
+ * kept as hard corners when curves are fitted. Every vertex of a bevelled
+ * corner is reported, which keeps the straight edges either side of it
+ * straight instead of letting the fit bend them.
  */
-export function findCorners(points: readonly Vec[], thresholdRadians: number): number[] {
+export function findCorners(points: readonly Vec[], thresholdRadians: number, window = 2.5): number[] {
   const corners: number[] = [];
   for (let i = 0; i < points.length; i++) {
-    if (turnAngle(points, i) >= thresholdRadians) corners.push(i);
+    if (turnAngle(points, i, window) >= thresholdRadians) corners.push(i);
   }
   return corners;
 }
