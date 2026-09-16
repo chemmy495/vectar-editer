@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { quantize, type ImageData8 } from '../src/core/trace/quantize.ts';
-import { labelComponents, maskFor, traceLoops, shoelace } from '../src/core/trace/contour.ts';
+import { labelComponents, traceLoops, shoelace } from '../src/core/trace/contour.ts';
 import { simplifyLoop, simplifyPolyline, dedupe, findCorners, collapseCollinear } from '../src/core/trace/simplify.ts';
 import { fitCurve, fitClosedLoop } from '../src/core/trace/fit.ts';
 import { traceImage, DEFAULT_TRACE_OPTIONS } from '../src/core/trace/trace.ts';
