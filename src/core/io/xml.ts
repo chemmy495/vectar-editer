@@ -16,15 +16,21 @@ const ENTITIES: Record<string, string> = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
 };
 
+/** True for values `String.fromCodePoint` accepts. */
+const isCodePoint = (value: number): boolean =>
+  Number.isInteger(value) && value >= 0 && value <= 0x10ffff;
+
 export function decodeEntities(input: string): string {
   return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
     if (body.startsWith('#x') || body.startsWith('#X')) {
       const code = parseInt(body.slice(2), 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      // An out-of-range escape is left as written rather than throwing, so one
+      // bad entity cannot abort a whole import.
+      return isCodePoint(code) ? String.fromCodePoint(code) : match;
     }
     if (body.startsWith('#')) {
       const code = parseInt(body.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      return isCodePoint(code) ? String.fromCodePoint(code) : match;
     }
     const named = ENTITIES[body.toLowerCase()];
     return named ?? match;

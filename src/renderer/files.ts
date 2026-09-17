@@ -12,22 +12,29 @@ import type { Editor } from './editor.ts';
 import type { CanvasView } from './canvas.ts';
 import { showDialog, showMessage, showProgress, modalActions } from './dialog.ts';
 import { button, checkbox, field, h, numberInput, select } from './dom.ts';
-import type { OpenedFile, SaveRequest } from '../main/ipc.ts';
+import type { MenuCommand, MessageBoxOptions, OpenFilter, OpenedFile, SaveRequest, SaveResult } from '../main/ipc.ts';
 
-/** The preload bridge, declared here so the renderer stays typed. */
+/**
+ * The preload bridge. The signatures are built from the shared IPC types so
+ * this declaration cannot drift away from what preload actually exposes.
+ */
 declare global {
   interface Window {
     vectar: {
-      openFile(filter: 'vectar' | 'vector' | 'raster' | 'all'): Promise<OpenedFile[] | null>;
+      openFile(filter: OpenFilter): Promise<OpenedFile[] | null>;
       readFile(path: string, encoding: 'utf8' | 'base64'): Promise<OpenedFile | null>;
-      saveFile(request: SaveRequest): Promise<{ path: string } | { cancelled: true }>;
+      saveFile(request: SaveRequest): Promise<SaveResult>;
       setTitle(title: string, dirty: boolean): void;
-      messageBox(options: { type: 'info' | 'warning' | 'error' | 'question'; message: string; detail?: string; buttons?: string[] }): Promise<number>;
+      messageBox(options: MessageBoxOptions): Promise<number>;
       onRequestClose(handler: () => Promise<boolean>): void;
-      onMenuCommand(handler: (command: string) => void): void;
+      onMenuCommand(handler: (command: MenuCommand) => void): void;
+      pathForFile(file: File): string | null;
     };
   }
 }
+
+/** True when a save actually wrote a file. */
+const didSave = (result: SaveResult): result is { path: string } => 'path' in result;
 
 const MIME_BY_EXTENSION: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
@@ -268,7 +275,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
       path: forceDialog ? undefined : (editor.filePath ?? undefined),
     };
     const result = await window.vectar.saveFile(request);
-    if ('cancelled' in result) return false;
+    if (!didSave(result)) return false;
     editor.markSaved(result.path);
     editor.setStatus(`Saved to ${result.path}`);
     return true;
@@ -325,7 +332,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
         data: exportSvg(editor.document, { includeBackground: choice.includeBackground }),
         encoding: 'utf8',
       });
-      if (!('cancelled' in result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
       return;
     }
 
@@ -337,7 +344,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
         data: bytesToBase64(bytes),
         encoding: 'base64',
       });
-      if (!('cancelled' in result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
       return;
     }
 
@@ -359,7 +366,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
         data: bytesToBase64(bytes),
         encoding: 'base64',
       });
-      if (!('cancelled' in result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
       return;
     }
 
@@ -370,7 +377,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
       data: await blobToBase64(blob),
       encoding: 'base64',
     });
-    if (!('cancelled' in result)) editor.setStatus(`Exported ${result.path}`);
+    if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
   };
 
   return {

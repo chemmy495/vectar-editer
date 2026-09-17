@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import { CHANNELS, type MenuCommand, type OpenFilter, type OpenedFile, type SaveRequest, type SaveResult } from './ipc.ts';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { CHANNELS, type MenuCommand, type MessageBoxOptions, type OpenFilter, type OpenedFile, type SaveRequest, type SaveResult } from './ipc.ts';
 
 /**
  * The only surface the renderer gets onto Node. Everything is funnelled
@@ -19,7 +19,7 @@ const api = {
     ipcRenderer.send(CHANNELS.setTitle, title, dirty);
   },
 
-  messageBox: (options: { type: 'info' | 'warning' | 'error' | 'question'; message: string; detail?: string; buttons?: string[] }): Promise<number> =>
+  messageBox: (options: MessageBoxOptions): Promise<number> =>
     ipcRenderer.invoke(CHANNELS.messageBox, options),
 
   /** Confirms an unsaved-changes prompt before the window closes. */
@@ -32,6 +32,19 @@ const api = {
 
   onMenuCommand: (handler: (command: MenuCommand) => void): void => {
     ipcRenderer.on(CHANNELS.menuCommand, (_event, command: MenuCommand) => handler(command));
+  },
+
+  /**
+   * Absolute path of a dropped or picked File. Electron 32 removed the
+   * non-standard `File.path` property, and this is its replacement; it has to
+   * run here because `webUtils` is not available to the sandboxed page.
+   */
+  pathForFile: (file: File): string | null => {
+    try {
+      return webUtils.getPathForFile(file) || null;
+    } catch {
+      return null;
+    }
   },
 };
 

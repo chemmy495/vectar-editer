@@ -21,7 +21,18 @@ export type SaveRequest = {
   path?: string;
 };
 
-export type SaveResult = { path: string } | { cancelled: true };
+export type SaveResult =
+  | { path: string }
+  | { cancelled: true }
+  /** The user picked a destination but the write failed; already reported. */
+  | { error: string };
+
+export type MessageBoxOptions = {
+  type: 'info' | 'warning' | 'error' | 'question';
+  message: string;
+  detail?: string;
+  buttons?: string[];
+};
 
 /** Commands the application menu sends to the renderer. */
 export type MenuCommand =

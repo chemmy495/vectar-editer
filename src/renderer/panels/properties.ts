@@ -6,23 +6,25 @@ import {
   type Fill, type LineCap, type LineJoin, type Stroke,
 } from '../../core/model/style.ts';
 import * as ops from '../../core/model/ops.ts';
-import type { PathNode, SceneNode, TextNode } from '../../core/model/node.ts';
+import type { PathNode, TextNode } from '../../core/model/node.ts';
+import type { VectarDocument } from '../../core/model/document.ts';
 import type { Editor } from '../editor.ts';
 
-/** Colour swatch plus alpha slider, shared by the fill and stroke sections. */
+/**
+ * Colour swatch plus alpha slider, shared by the fill and stroke sections.
+ *
+ * `onChange` runs live so the canvas updates while dragging, and `onCommit`
+ * runs once at the end. The panel only rebuilds itself on commit: rebuilding
+ * on every `input` event would destroy the control being dragged.
+ */
 function colorControl(
   label: string,
   paint: ReturnType<typeof paintColor>,
   hasPaint: boolean,
-  onChange: (color: RGBA | null) => void,
+  onChange: (color: RGBA | null, live: boolean) => void,
 ): HTMLElement {
   const current = paint ?? { ...WHITE, a: 0 };
   const swatch = h('input', { type: 'color', class: 'color-swatch', value: toHex(current) });
-  swatch.addEventListener('input', () => {
-    const parsed = parseColor(swatch.value);
-    if (parsed) onChange({ ...parsed, a: current.a > 0 ? current.a : 1 });
-  });
-
   const alpha = h('input', {
     type: 'range',
     class: 'alpha-slider',
@@ -30,12 +32,23 @@ function colorControl(
     max: 100,
     value: String(Math.round(current.a * 100)),
   });
-  alpha.addEventListener('input', () => {
-    const parsed = parseColor(swatch.value) ?? current;
-    onChange({ ...parsed, a: Number(alpha.value) / 100 });
-  });
 
-  const none = button('None', () => onChange(null), {
+  const build = (): RGBA | null => {
+    const parsed = parseColor(swatch.value);
+    if (!parsed) return null;
+    return { ...parsed, a: Number(alpha.value) / 100 };
+  };
+  const emit = (live: boolean) => {
+    const color = build();
+    if (color) onChange(color, live);
+  };
+
+  for (const control of [swatch, alpha]) {
+    control.addEventListener('input', () => emit(true));
+    control.addEventListener('change', () => emit(false));
+  }
+
+  const none = button('None', () => onChange(null, false), {
     class: `mini-button${hasPaint ? '' : ' active'}`,
     title: `Remove the ${label.toLowerCase()}`,
   });
@@ -53,31 +66,98 @@ function colorControl(
  * or the defaults that new objects will take when nothing is selected.
  */
 export function createPropertiesPanel(editor: Editor, container: HTMLElement): void {
-  const applyFill = (build: (fill: Fill) => Fill) => {
-    const nodes = editor.selectedNodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
-    if (nodes.length === 0) {
-      editor.setFill(build(editor.fill));
-      return;
-    }
-    editor.transaction('Change fill', () => {
-      for (const node of nodes) {
-        editor.run(ops.patchNode(editor.document, node.id, { fill: build(node.fill) } as Partial<SceneNode>, 'Change fill'));
-      }
+  /**
+   * A style drag in progress. `before` holds the values from before the drag
+   * started, so every live update is derived from those rather than compounding
+   * on the previous preview, and the whole drag lands on the undo stack as one
+   * step when it ends.
+   */
+  let pendingStyle: {
+    key: 'fill' | 'stroke';
+    label: string;
+    before: Array<{ node: PathNode | TextNode; value: Fill | Stroke }>;
+  } | null = null;
+
+  /**
+   * Records an in-progress style drag as a single undo step. Called both when
+   * the control reports it is done and when the pointer is released anywhere,
+   * so a drag can never be left applied but unrecorded.
+   */
+  const commitPendingStyle = () => {
+    const pending = pendingStyle;
+    if (!pending) return;
+    pendingStyle = null;
+
+    const key = pending.key;
+    const after = pending.before.map((entry) => ({ node: entry.node, value: entry.node[key] }));
+    if (after.every((entry, i) => entry.value === pending.before[i].value)) return;
+
+    editor.history.push({
+      label: pending.label,
+      redo: () => {
+        for (const entry of after) (entry.node[key] as Fill | Stroke) = entry.value;
+        editor.emit('document');
+      },
+      undo: () => {
+        for (const entry of pending.before) (entry.node[key] as Fill | Stroke) = entry.value;
+        editor.emit('document');
+      },
     });
   };
 
-  const applyStroke = (build: (stroke: Stroke) => Stroke) => {
+  /**
+   * Applies a style change to the selection, or to the defaults for new
+   * objects when nothing is selected. A `live` call previews without recording;
+   * the change is recorded once the drag ends.
+   */
+  const applyStyle = <T extends Fill | Stroke>(
+    key: 'fill' | 'stroke',
+    build: (value: T) => T,
+    live: boolean,
+    label: string,
+  ) => {
+    // Suspend rebuilds first: editing the default style with nothing selected
+    // still emits an event this panel listens to.
+    if (live) beginInteraction();
+
     const nodes = editor.selectedNodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
     if (nodes.length === 0) {
-      editor.setStroke(build(editor.stroke));
+      if (key === 'fill') editor.setFill(build(editor.fill as T) as Fill);
+      else editor.setStroke(build(editor.stroke as T) as Stroke);
+      if (!live) endInteraction();
       return;
     }
-    editor.transaction('Change stroke', () => {
-      for (const node of nodes) {
-        editor.run(ops.patchNode(editor.document, node.id, { stroke: build(node.stroke) } as Partial<SceneNode>, 'Change stroke'));
-      }
+
+    // Starting a different drag commits whatever came before it.
+    const sameDrag =
+      pendingStyle !== null &&
+      pendingStyle.key === key &&
+      pendingStyle.before.length === nodes.length &&
+      pendingStyle.before.every((entry, i) => entry.node === nodes[i]);
+    if (!sameDrag) {
+      commitPendingStyle();
+      pendingStyle = { key, label, before: nodes.map((node) => ({ node, value: node[key] })) };
+    }
+
+    const origin = pendingStyle!.before;
+    nodes.forEach((node, i) => {
+      (node[key] as Fill | Stroke) = build(origin[i].value as T);
     });
+    // A preview is a real change to the document even before it is recorded.
+    editor.markDirty();
+    editor.emit('document');
+
+    if (!live) {
+      commitPendingStyle();
+      endInteraction();
+    }
   };
+
+  const applyFill = (build: (fill: Fill) => Fill, live = false) =>
+    applyStyle<Fill>('fill', build, live, 'Change fill');
+
+  const applyStroke = (build: (stroke: Stroke) => Stroke, live = false) =>
+    applyStyle<Stroke>('stroke', build, live, 'Change stroke');
 
   /** Style shown in the panel: the selection's, or the editor defaults. */
   const currentStyle = (): { fill: Fill; stroke: Stroke } => {
@@ -90,11 +170,11 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     const { fill } = currentStyle();
     return h('section', { class: 'panel-section' }, [
       h('h3', { text: 'Fill' }),
-      colorControl('Colour', paintColor(fill.paint), isFillVisible(fill), (color) => {
+      colorControl('Colour', paintColor(fill.paint), isFillVisible(fill), (color, live) => {
         applyFill((current) => ({
           ...cloneFill(current),
           paint: color ? solidPaint(color) : { type: 'none' },
-        }));
+        }), live);
       }),
       field('Rule', select(fill.rule, [
         { value: 'nonzero', label: 'Non-zero' },
@@ -107,11 +187,11 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     const { stroke } = currentStyle();
     return h('section', { class: 'panel-section' }, [
       h('h3', { text: 'Stroke' }),
-      colorControl('Colour', paintColor(stroke.paint), isStrokeVisible(stroke), (color) => {
+      colorControl('Colour', paintColor(stroke.paint), isStrokeVisible(stroke), (color, live) => {
         applyStroke((current) => ({
           ...cloneStroke(current),
           paint: color ? solidPaint(color) : { type: 'none' },
-        }));
+        }), live);
       }),
       field('Width', numberInput(stroke.width, (width) => {
         applyStroke((current) => ({ ...cloneStroke(current), width: Math.max(0, width) }));
@@ -316,35 +396,68 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     return null;
   };
 
+  /**
+   * Canvas size and background are document state, so they go through history
+   * like everything else. Editing them directly used to leave the change
+   * un-undoable and, worse, not marked dirty, so it was silently lost on close.
+   */
+  const setDocumentProperty = <K extends 'width' | 'height' | 'background'>(
+    key: K,
+    value: VectarDocument[K],
+    label: string,
+  ) => {
+    const doc = editor.document;
+    const before = doc[key];
+    if (before === value) return;
+    editor.history.execute({
+      label,
+      redo: () => {
+        doc[key] = value;
+        editor.emit('document', 'view');
+      },
+      undo: () => {
+        doc[key] = before;
+        editor.emit('document', 'view');
+      },
+    });
+  };
+
   const documentSection = (): HTMLElement => {
     const doc = editor.document;
     const background = doc.background ?? { r: 255, g: 255, b: 255, a: 0 };
     const swatch = h('input', { type: 'color', class: 'color-swatch', value: toHex(background) });
+    // Preview live while dragging the picker, record once on commit.
     swatch.addEventListener('input', () => {
       const parsed = parseColor(swatch.value);
       if (!parsed) return;
+      beginInteraction();
       doc.background = parsed;
+      editor.markDirty();
       editor.emit('document');
+    });
+    swatch.addEventListener('change', () => {
+      const parsed = parseColor(swatch.value);
+      if (!parsed) return;
+      doc.background = background;
+      setDocumentProperty('background', parsed, 'Change background');
+      endInteraction();
     });
 
     return h('section', { class: 'panel-section' }, [
       h('h3', { text: 'Document' }),
       h('div', { class: 'field-grid' }, [
         field('W', numberInput(doc.width, (width) => {
-          doc.width = Math.max(1, width);
-          editor.emit('document');
+          setDocumentProperty('width', Math.max(1, width), 'Resize canvas');
         }, { min: 1 })),
         field('H', numberInput(doc.height, (height) => {
-          doc.height = Math.max(1, height);
-          editor.emit('document');
+          setDocumentProperty('height', Math.max(1, height), 'Resize canvas');
         }, { min: 1 })),
       ]),
       h('div', { class: 'color-control' }, [
         h('span', { class: 'field-label', text: 'Background' }),
         swatch,
         button('None', () => {
-          doc.background = null;
-          editor.emit('document');
+          setDocumentProperty('background', null, 'Clear background');
         }, { class: `mini-button${doc.background ? '' : ' active'}`, title: 'Transparent background' }),
       ]),
       checkbox(editor.showGrid, 'Show grid', (showGrid) => {
@@ -362,7 +475,35 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     ]);
   };
 
+  /** True while a control in this panel owns an in-progress drag. */
+  let interacting = false;
+  let renderPending = false;
+
+  /** Suspends panel rebuilds so a live drag keeps its control. */
+  const beginInteraction = () => {
+    interacting = true;
+  };
+
+  const endInteraction = () => {
+    commitPendingStyle();
+    if (!interacting) return;
+    interacting = false;
+    if (renderPending) {
+      renderPending = false;
+      render();
+    }
+  };
+
+  // A pointer released anywhere ends the drag, even if the control's own
+  // `change` event never arrives.
+  window.addEventListener('pointerup', endInteraction);
+  window.addEventListener('pointercancel', endInteraction);
+
   const render = () => {
+    if (interacting) {
+      renderPending = true;
+      return;
+    }
     clear(container);
     const sections: Array<HTMLElement | null> = [
       h('div', { class: 'panel-header' }, [

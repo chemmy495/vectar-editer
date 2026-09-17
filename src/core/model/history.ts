@@ -126,6 +126,15 @@ export class History {
     return this.undoStack.length;
   }
 
+  /**
+   * The command on top of the undo stack, or null when nothing is recorded.
+   * Callers compare it by identity to tell whether the document has moved
+   * away from a known state, which stack depth alone cannot express.
+   */
+  lastCommand(): Command | null {
+    return this.undoStack.length > 0 ? this.undoStack[this.undoStack.length - 1] : null;
+  }
+
   onChange(listener: HistoryListener): () => void {
     this.listeners.push(listener);
     return () => {

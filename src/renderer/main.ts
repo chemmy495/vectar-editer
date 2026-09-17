@@ -237,10 +237,15 @@ function main(): void {
   window.addEventListener('dragover', (event) => event.preventDefault());
   window.addEventListener('drop', (event) => {
     event.preventDefault();
+    // `File.path` was removed in Electron 32; the preload resolves the real
+    // path through webUtils instead.
     const paths = [...(event.dataTransfer?.files ?? [])]
-      .map((file) => (file as File & { path?: string }).path)
+      .map((file) => window.vectar.pathForFile(file))
       .filter((path): path is string => typeof path === 'string' && path.length > 0);
-    if (paths.length === 0) return;
+    if (paths.length === 0) {
+      editor.setStatus('Could not read the dropped file');
+      return;
+    }
     void (async () => {
       for (const path of paths) {
         const encoding = /\.(svg|vectar)$/i.test(path) ? 'utf8' : 'base64';

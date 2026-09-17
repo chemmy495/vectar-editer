@@ -152,7 +152,8 @@ These are real gaps rather than hidden bugs, listed so they are not a surprise:
 - **Gradients can be imported, exported and rendered, but there is no UI for
   creating or editing them yet** — the properties panel edits solid colours.
 - **SVG import skips** `<use>` references, clip paths, masks, filters and
-  pattern fills. The importer reports which of these it skipped.
+  pattern fills. The importer reports which of these it skipped. There is no
+  CSS cascade to inherit from, so `currentColor` resolves to black.
 - **PDF export is a minimal writer.** Its structure is verified by tests,
   including that the cross-reference offsets point at their objects, but it has
   not been checked against the full range of PDF readers.

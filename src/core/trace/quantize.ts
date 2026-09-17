@@ -226,6 +226,9 @@ export function blur(image: ImageData8, passes = 1): ImageData8 {
   for (let pass = 0; pass < passes; pass++) {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
+        // Averaging is done on premultiplied colour. Averaging raw channels
+        // would pull the invisible black of transparent pixels into opaque
+        // neighbours, leaving a dark halo along every edge of a cut-out.
         let r = 0, g = 0, b = 0, a = 0, n = 0;
         for (let dy = -1; dy <= 1; dy++) {
           const sy = y + dy;
@@ -234,17 +237,20 @@ export function blur(image: ImageData8, passes = 1): ImageData8 {
             const sx = x + dx;
             if (sx < 0 || sx >= width) continue;
             const o = (sy * width + sx) * 4;
-            r += source[o];
-            g += source[o + 1];
-            b += source[o + 2];
+            const alpha = source[o + 3] / 255;
+            r += source[o] * alpha;
+            g += source[o + 1] * alpha;
+            b += source[o + 2] * alpha;
             a += source[o + 3];
             n += 1;
           }
         }
+        // Undo the premultiplication: mean colour = (sum of colour*alpha) /
+        // (sum of alpha), with alpha back on a 0-255 scale.
         const o = (y * width + x) * 4;
-        target[o] = r / n;
-        target[o + 1] = g / n;
-        target[o + 2] = b / n;
+        target[o] = a > 0 ? (r * 255) / a : 0;
+        target[o + 1] = a > 0 ? (g * 255) / a : 0;
+        target[o + 2] = a > 0 ? (b * 255) / a : 0;
         target[o + 3] = a / n;
       }
     }

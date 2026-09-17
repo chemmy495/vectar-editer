@@ -60,9 +60,11 @@ function tokenize(d: string): Token[] {
     skipSeparators();
     if (i >= n) break;
     const ch = d[i];
+    let readCommandLetter = false;
     if (/[a-zA-Z]/.test(ch)) {
       command = ch;
       i++;
+      readCommandLetter = true;
     } else if (!command) {
       break; // Numbers before any command are not valid path data.
     } else if (command === 'M') {
@@ -74,6 +76,10 @@ function tokenize(d: string): Token[] {
     const count = ARG_COUNT[lower];
     if (count === undefined) break;
     if (count === 0) {
+      // `Z` takes no arguments, so a number after one cannot be a repeat of it.
+      // Stopping here matches how browsers treat the rest of the data as
+      // malformed, and stops this loop from spinning without consuming input.
+      if (!readCommandLetter) break;
       tokens.push({ command, args: [] });
       continue;
     }

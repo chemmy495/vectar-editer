@@ -309,3 +309,51 @@ test('documentStats counts paths and anchors', () => {
   assert.equal(stats.paths, 1);
   assert.equal(stats.anchors, 4);
 });
+
+test('lastCommand identifies the top of the undo stack across undo and redo', () => {
+  // The dirty flag compares this by identity. Stack depth cannot express it:
+  // undoing then making a different edit returns to the same depth while the
+  // document is genuinely different.
+  const doc = createDocument();
+  const history = new History();
+  assert.equal(history.lastCommand(), null);
+
+  const first = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'a')]);
+  history.execute(first);
+  const second = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'b')]);
+  history.execute(second);
+  assert.equal(history.lastCommand(), second);
+
+  // A saved state recorded here must not be mistaken for the state reached by
+  // undoing and then making a different edit.
+  const saved = history.lastCommand();
+  history.undo();
+  assert.equal(history.lastCommand(), first);
+  assert.notEqual(history.lastCommand(), saved);
+
+  history.redo();
+  assert.equal(history.lastCommand(), saved);
+
+  history.undo();
+  const replacement = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'c')]);
+  history.execute(replacement);
+  assert.equal(history.depth(), 2, 'same depth as when it was saved');
+  assert.notEqual(history.lastCommand(), saved, 'but a different document state');
+
+  history.clear();
+  assert.equal(history.lastCommand(), null);
+});
+
+test('lastCommand still differs from a saved state once the stack saturates', () => {
+  // With a bounded stack, depth stops growing and can no longer distinguish
+  // states at all; identity still can.
+  const doc = createDocument();
+  const history = new History(3);
+  history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+  const saved = history.lastCommand();
+  for (let i = 0; i < 5; i++) {
+    history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+  }
+  assert.equal(history.depth(), 3, 'the stack is capped');
+  assert.notEqual(history.lastCommand(), saved);
+});

@@ -1,8 +1,9 @@
 import { compose, identity, parseTransform, scaling, translation, type Matrix } from '../../geometry/matrix.ts';
 import type { Rect } from '../../geometry/rect.ts';
+import type { Vec } from '../../geometry/vec.ts';
 import { parsePathData } from '../../path/parse.ts';
 import { ellipsePath, linePath, polylinePath, rectanglePath } from '../../path/shapes.ts';
-import type { PathData } from '../../path/path.ts';
+import { bounds as pathBounds, type PathData } from '../../path/path.ts';
 import { BLACK, parseColor, type RGBA } from '../../model/color.ts';
 import { createDocument, type VectarDocument } from '../../model/document.ts';
 import {
@@ -17,10 +18,10 @@ import { findAll, parseXml, type XmlNode } from '../xml.ts';
 
 /** Style values inherited down the SVG tree. */
 type InheritedStyle = {
-  fill: Paint;
+  fill: ResolvedPaint;
   fillRule: FillRule;
   fillOpacity: number;
-  stroke: Paint;
+  stroke: ResolvedPaint;
   strokeOpacity: number;
   strokeWidth: number;
   cap: LineCap;
@@ -37,10 +38,10 @@ type InheritedStyle = {
 };
 
 const ROOT_STYLE: InheritedStyle = {
-  fill: solidPaint(BLACK),
+  fill: { paint: solidPaint(BLACK), objectBox: false },
   fillRule: 'nonzero',
   fillOpacity: 1,
-  stroke: { type: 'none' },
+  stroke: { paint: { type: 'none' }, objectBox: false },
   strokeOpacity: 1,
   strokeWidth: 1,
   cap: 'butt',
@@ -129,53 +130,108 @@ function collectGradients(root: XmlNode): Map<string, GradientDefinition> {
   return result;
 }
 
-/** Resolves a gradient, following `href` inheritance for stops. */
-function resolveGradient(id: string, gradients: Map<string, GradientDefinition>, depth = 0): Paint {
+/** A paint plus whether its coordinates are fractions of the shape's box. */
+type ResolvedPaint = { paint: Paint; objectBox: boolean };
+
+/**
+ * Resolves a gradient, following `href` inheritance for stops.
+ *
+ * SVG's default `gradientUnits` is `objectBoundingBox`, where coordinates are
+ * fractions of the shape being filled rather than user-space lengths. Those
+ * cannot be turned into absolute coordinates until the shape's own bounds are
+ * known, so they are kept as fractions here and mapped later.
+ */
+function resolveGradient(
+  id: string,
+  gradients: Map<string, GradientDefinition>,
+  viewport: { width: number; height: number },
+  depth = 0,
+): ResolvedPaint {
   const definition = gradients.get(id);
-  if (!definition || depth > 8) return { type: 'none' };
+  if (!definition || depth > 8) return { paint: { type: 'none' }, objectBox: false };
   let stops = definition.stops;
   if (stops.length === 0 && definition.href) {
-    const inherited = resolveGradient(definition.href.replace(/^#/, ''), gradients, depth + 1);
-    if (inherited.type === 'linear' || inherited.type === 'radial') stops = inherited.stops;
+    const inherited = resolveGradient(definition.href.replace(/^#/, ''), gradients, viewport, depth + 1);
+    if (inherited.paint.type === 'linear' || inherited.paint.type === 'radial') stops = inherited.paint.stops;
   }
-  if (stops.length === 0) return { type: 'none' };
+  if (stops.length === 0) return { paint: { type: 'none' }, objectBox: false };
 
   const a = definition.attributes;
+  const objectBox = (a.gradientUnits ?? 'objectBoundingBox') !== 'userSpaceOnUse';
+  // In object-box units a percentage maps onto 0..1; in user space it maps
+  // onto the viewport.
+  const referenceX = objectBox ? 1 : viewport.width;
+  const referenceY = objectBox ? 1 : viewport.height;
+  const referenceDiagonal = objectBox ? 1 : Math.hypot(viewport.width, viewport.height) / Math.SQRT2;
+
   if (definition.kind === 'linear') {
     return {
-      type: 'linear',
-      from: { x: parseLength(a.x1 ?? '0%', 100), y: parseLength(a.y1 ?? '0%', 100) },
-      to: { x: parseLength(a.x2 ?? '100%', 100), y: parseLength(a.y2 ?? '0%', 100) },
-      stops,
+      objectBox,
+      paint: {
+        type: 'linear',
+        from: { x: parseLength(a.x1 ?? '0%', referenceX), y: parseLength(a.y1 ?? '0%', referenceY) },
+        to: { x: parseLength(a.x2 ?? '100%', referenceX), y: parseLength(a.y2 ?? '0%', referenceY) },
+        stops,
+      },
     };
   }
   return {
-    type: 'radial',
-    center: { x: parseLength(a.cx ?? '50%', 100), y: parseLength(a.cy ?? '50%', 100) },
-    radius: parseLength(a.r ?? '50%', 100),
-    stops,
+    objectBox,
+    paint: {
+      type: 'radial',
+      center: { x: parseLength(a.cx ?? '50%', referenceX), y: parseLength(a.cy ?? '50%', referenceY) },
+      radius: parseLength(a.r ?? '50%', referenceDiagonal),
+      stops,
+    },
   };
+}
+
+/** Rewrites an object-box gradient's fractions into the shape's own bounds. */
+function mapPaintToBounds(paint: Paint, bounds: Rect | null): Paint {
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return paint;
+  const toBox = (p: Vec): Vec => ({ x: bounds.x + p.x * bounds.width, y: bounds.y + p.y * bounds.height });
+  if (paint.type === 'linear') {
+    return { ...paint, from: toBox(paint.from), to: toBox(paint.to) };
+  }
+  if (paint.type === 'radial') {
+    return {
+      ...paint,
+      center: toBox(paint.center),
+      focal: paint.focal ? toBox(paint.focal) : undefined,
+      // A single radius cannot describe a non-square box; use the mean extent.
+      radius: paint.radius * ((bounds.width + bounds.height) / 2),
+    };
+  }
+  return paint;
 }
 
 function resolvePaint(
   value: string | undefined,
-  inherited: Paint,
+  inherited: ResolvedPaint,
   gradients: Map<string, GradientDefinition>,
-): Paint {
+  viewport: { width: number; height: number },
+): ResolvedPaint {
   if (value === undefined) return inherited;
   const text = value.trim();
-  if (text === '' || text === 'inherit') return inherited;
-  if (text === 'none') return { type: 'none' };
+  // Keywords are case-insensitive, but the id inside url(#...) is not, so only
+  // the keyword comparison is lowercased.
+  const keyword = text.toLowerCase();
+  if (keyword === '' || keyword === 'inherit') return inherited;
+  if (keyword === 'none') return { paint: { type: 'none' }, objectBox: false };
+  // There is no CSS `color` to inherit from here. Icon sets lean on
+  // `currentColor` heavily, so resolving it to black keeps them visible
+  // instead of importing as nothing.
+  if (keyword === 'currentcolor') return { paint: solidPaint(BLACK), objectBox: false };
   const url = /^url\(\s*['"]?#([^'")\s]+)['"]?\s*\)/.exec(text);
   if (url) {
-    const paint = resolveGradient(url[1], gradients);
-    if (paint.type !== 'none') return paint;
+    const resolved = resolveGradient(url[1], gradients, viewport);
+    if (resolved.paint.type !== 'none') return resolved;
     // Fall back to any colour given after the url(), as SVG allows.
     const fallback = parseColor(text.slice(url[0].length).trim());
-    return fallback ? solidPaint(fallback) : { type: 'none' };
+    return { paint: fallback ? solidPaint(fallback) : { type: 'none' }, objectBox: false };
   }
   const color = parseColor(text);
-  return color ? solidPaint(color) : inherited;
+  return color ? { paint: solidPaint(color), objectBox: false } : inherited;
 }
 
 /** Applies an opacity multiplier to a paint's colours. */
@@ -205,6 +261,7 @@ function resolveStyle(
   node: XmlNode,
   inherited: InheritedStyle,
   gradients: Map<string, GradientDefinition>,
+  viewport: { width: number; height: number },
 ): InheritedStyle {
   const inline = parseStyleAttribute(node.attributes.style);
   const get = (name: string): string | undefined => inline[name] ?? node.attributes[name];
@@ -225,10 +282,10 @@ function resolveStyle(
       : dashText.split(/[\s,]+/).map(Number).filter((v) => Number.isFinite(v) && v >= 0);
 
   return {
-    fill: resolvePaint(get('fill'), inherited.fill, gradients),
+    fill: resolvePaint(get('fill'), inherited.fill, gradients, viewport),
     fillRule: (get('fill-rule') as FillRule | undefined) === 'evenodd' ? 'evenodd' : inherited.fillRule,
     fillOpacity: numberOr(get('fill-opacity'), inherited.fillOpacity),
-    stroke: resolvePaint(get('stroke'), inherited.stroke, gradients),
+    stroke: resolvePaint(get('stroke'), inherited.stroke, gradients, viewport),
     strokeOpacity: numberOr(get('stroke-opacity'), inherited.strokeOpacity),
     strokeWidth: get('stroke-width') === undefined ? inherited.strokeWidth : parseLength(get('stroke-width')),
     cap: (get('stroke-linecap') as LineCap | undefined) ?? inherited.cap,
@@ -246,13 +303,19 @@ function resolveStyle(
   };
 }
 
-const fillFrom = (style: InheritedStyle): Fill => ({
-  paint: withOpacity(style.fill, style.fillOpacity),
+const fillFrom = (style: InheritedStyle, bounds: Rect | null = null): Fill => ({
+  paint: withOpacity(
+    style.fill.objectBox ? mapPaintToBounds(style.fill.paint, bounds) : style.fill.paint,
+    style.fillOpacity,
+  ),
   rule: style.fillRule,
 });
 
-const strokeFrom = (style: InheritedStyle): Stroke => ({
-  paint: withOpacity(style.stroke, style.strokeOpacity),
+const strokeFrom = (style: InheritedStyle, bounds: Rect | null = null): Stroke => ({
+  paint: withOpacity(
+    style.stroke.objectBox ? mapPaintToBounds(style.stroke.paint, bounds) : style.stroke.paint,
+    style.strokeOpacity,
+  ),
   width: style.strokeWidth,
   cap: style.cap,
   join: style.join,
@@ -318,12 +381,13 @@ function convertElement(
   node: XmlNode,
   inherited: InheritedStyle,
   gradients: Map<string, GradientDefinition>,
+  viewport: { width: number; height: number },
   depth: number,
 ): SceneNode[] {
   if (SKIPPED.has(node.name) || depth > 64) return [];
   if (node.attributes.display === 'none') return [];
 
-  const style = resolveStyle(node, inherited, gradients);
+  const style = resolveStyle(node, inherited, gradients, viewport);
   const transform = parseTransform(node.attributes.transform ?? '');
   const opacity = numberOr(node.attributes.opacity ?? parseStyleAttribute(node.attributes.style).opacity, 1);
   // `data-name` is what this editor writes; the others cover other tools.
@@ -339,7 +403,7 @@ function convertElement(
 
   if (node.name === 'g' || node.name === 'svg' || node.name === 'a') {
     const children: SceneNode[] = [];
-    for (const child of node.children) children.push(...convertElement(child, style, gradients, depth + 1));
+    for (const child of node.children) children.push(...convertElement(child, style, gradients, viewport, depth + 1));
     if (children.length === 0) return [];
     // A group that only wraps one child and adds nothing is noise; inline it.
     return finish(createGroupNode(children, label ?? 'Group'));
@@ -361,8 +425,9 @@ function convertElement(
     text.italic = style.italic;
     text.letterSpacing = style.letterSpacing;
     text.align = style.textAnchor;
-    text.fill = cloneFill(fillFrom(style));
-    text.stroke = cloneStroke(strokeFrom(style));
+    const textBounds = { x: text.x, y: text.y - text.fontSize, width: text.fontSize * content.length * 0.55, height: text.fontSize * 1.2 };
+    text.fill = cloneFill(fillFrom(style, textBounds));
+    text.stroke = cloneStroke(strokeFrom(style, textBounds));
     return finish(text);
   }
 
@@ -378,8 +443,9 @@ function convertElement(
   const geometry = shapeGeometry(node);
   if (!geometry || geometry.subpaths.length === 0) return [];
   const path = createPathNode(geometry, label ?? node.name);
-  path.fill = cloneFill(fillFrom(style));
-  path.stroke = cloneStroke(strokeFrom(style));
+  const bounds = geometryBounds(geometry);
+  path.fill = cloneFill(fillFrom(style, bounds));
+  path.stroke = cloneStroke(strokeFrom(style, bounds));
   // An open shape with no explicit fill reads better unfilled.
   if (node.name === 'line' || node.name === 'polyline') {
     if (node.attributes.fill === undefined && !parseStyleAttribute(node.attributes.style).fill) {
@@ -392,6 +458,11 @@ function convertElement(
 
 function defaultStrokeFrom(style: InheritedStyle): Stroke {
   return { ...strokeFrom(style), paint: solidPaint(BLACK) };
+}
+
+/** Bounds of freshly built geometry, used to place object-box gradients. */
+function geometryBounds(path: PathData): Rect | null {
+  return pathBounds(path);
 }
 
 export type SvgImportResult = {
@@ -427,24 +498,33 @@ export function importSvg(source: string, name = 'Imported'): SvgImportResult {
 
   let rootTransform: Matrix = identity();
   if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
-    // `preserveAspectRatio` beyond the uniform default is not modelled.
     const scaleX = width / viewBox.width;
     const scaleY = height / viewBox.height;
-    rootTransform = compose(scaling(scaleX, scaleY), translation(-viewBox.x, -viewBox.y));
-    if (root.attributes.preserveAspectRatio && root.attributes.preserveAspectRatio !== 'none') {
-      const uniform = Math.min(scaleX, scaleY);
-      if (Math.abs(scaleX - scaleY) > 1e-6) {
-        rootTransform = compose(
-          translation((width - viewBox.width * uniform) / 2, (height - viewBox.height * uniform) / 2),
-          scaling(uniform),
-          translation(-viewBox.x, -viewBox.y),
-        );
-      }
+    // The default is `xMidYMid meet`: scale uniformly and centre. Only an
+    // explicit `none` stretches the artwork to fill the viewport.
+    const preserve = (root.attributes.preserveAspectRatio ?? '').trim();
+    if (preserve.startsWith('none')) {
+      rootTransform = compose(scaling(scaleX, scaleY), translation(-viewBox.x, -viewBox.y));
+    } else {
+      // `slice` fills the viewport and crops; `meet` (the default) fits inside.
+      const uniform = preserve.endsWith('slice') ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+      const alignX = preserve.includes('xMin') ? 0 : preserve.includes('xMax') ? 1 : 0.5;
+      const alignY = preserve.includes('YMin') ? 0 : preserve.includes('YMax') ? 1 : 0.5;
+      rootTransform = compose(
+        translation((width - viewBox.width * uniform) * alignX, (height - viewBox.height * uniform) * alignY),
+        scaling(uniform),
+        translation(-viewBox.x, -viewBox.y),
+      );
     }
   }
 
+  // Presentation attributes on <svg> itself are inherited by its children.
+  // Icon sets in particular put `fill="none" stroke="currentColor"` there.
+  const viewport = { width: viewBox?.width ?? width, height: viewBox?.height ?? height };
+  const rootStyle = resolveStyle(root, ROOT_STYLE, gradients, viewport);
+
   const children: SceneNode[] = [];
-  for (const child of root.children) children.push(...convertElement(child, ROOT_STYLE, gradients, 0));
+  for (const child of root.children) children.push(...convertElement(child, rootStyle, gradients, viewport, 0));
 
   const layer = createLayerNode(name);
   layer.transform = rootTransform;

@@ -82,16 +82,32 @@ export class Editor {
   clipboard: SceneNode[] = [];
 
   private listeners = new Map<EditorEvent, Set<() => void>>();
-  /** History depth at the last save, used to track the dirty flag. */
-  private savedDepth = 0;
+  /**
+   * The command that was on top of the undo stack when the document was last
+   * saved. Comparing identity rather than stack depth is what makes undo, redo
+   * and a saturated stack all report the dirty state correctly.
+   */
+  private savedCommand: Command | null = null;
 
   constructor(doc: VectarDocument = createDocument()) {
     this.document = doc;
     this.activeLayerId = doc.layers[0]?.id ?? '';
     this.history.onChange(() => {
-      this.dirty = this.history.depth() !== this.savedDepth;
+      this.refreshDirty();
       this.emit('document');
     });
+  }
+
+  /** Recomputes the dirty flag from the current top of the undo stack. */
+  private refreshDirty(): void {
+    this.dirty = this.history.lastCommand() !== this.savedCommand;
+  }
+
+  /** Marks the document as changed by an edit that history does not record. */
+  markDirty(): void {
+    if (this.dirty) return;
+    this.dirty = true;
+    this.emit('document');
   }
 
   on(event: EditorEvent, listener: () => void): () => void {
@@ -122,14 +138,14 @@ export class Editor {
     this.selection.clear();
     this.nodeSelection = null;
     this.history.clear();
-    this.savedDepth = 0;
+    this.savedCommand = null;
     this.dirty = false;
     this.emit('document', 'selection', 'view');
   }
 
   markSaved(filePath: string | null): void {
     if (filePath) this.filePath = filePath;
-    this.savedDepth = this.history.depth();
+    this.savedCommand = this.history.lastCommand();
     this.dirty = false;
     this.emit('document');
   }

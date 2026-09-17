@@ -325,3 +325,126 @@ test('cloneDocument makes an independent copy', () => {
   assert.equal(doc.layers[0].children[0].name, 'A');
   assert.equal(doc.layers[0].children.length, 1);
 });
+
+test('an entity above the Unicode maximum is left alone, not thrown on', () => {
+  // Regression: String.fromCodePoint threw a RangeError and aborted the import.
+  assert.equal(decodeEntities('a&#x110000;b'), 'a&#x110000;b');
+  assert.equal(decodeEntities('a&#99999999;b'), 'a&#99999999;b');
+  assert.equal(decodeEntities('a&#65;b'), 'aAb');
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+    + '<path d="M0 0 L5 5" id="a&#x110000;b"/></svg>';
+  const { document } = importSvg(svg);
+  assert.equal(query.allNodes(document).filter((n) => n.type === 'path').length, 1);
+});
+
+test('presentation attributes on the root svg are inherited', () => {
+  // Regression: icon sets put fill/stroke on <svg> itself, and ignoring them
+  // imported every icon as a solid black blob.
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>`;
+  const node = query.allNodes(importSvg(svg).document).find((n) => n.type === 'path') as any;
+  assert.equal(node.fill.paint.type, 'none');
+  assert.equal(node.stroke.paint.type, 'solid');
+  assert.equal(node.stroke.width, 2);
+  assert.equal(node.stroke.cap, 'round');
+});
+
+test('preserveAspectRatio defaults to uniform scaling and centring', () => {
+  // Regression: the default stretched the artwork to fill the viewport.
+  const circle = '<circle cx="50" cy="50" r="50"/>';
+  const fit = importSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 100 100">${circle}</svg>`).document;
+  const node = query.allNodes(fit).find((n) => n.type === 'path')!;
+  const bounds = query.worldBounds(node, query.parentTransform(fit, node.id))!;
+  close(bounds.width, 100, 0.01);
+  close(bounds.height, 100, 0.01);
+  close(bounds.x, 50, 0.01); // centred in the 200-wide viewport
+
+  // `none` is the one value that stretches.
+  const stretched = importSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 100 100" preserveAspectRatio="none">${circle}</svg>`).document;
+  const stretchedNode = query.allNodes(stretched).find((n) => n.type === 'path')!;
+  const stretchedBounds = query.worldBounds(stretchedNode, query.parentTransform(stretched, stretchedNode.id))!;
+  close(stretchedBounds.width, 200, 0.01);
+
+  // xMinYMin pins to the top-left instead of centring.
+  const pinned = importSvg(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 100 100" preserveAspectRatio="xMinYMin meet">${circle}</svg>`).document;
+  const pinnedNode = query.allNodes(pinned).find((n) => n.type === 'path')!;
+  close(query.worldBounds(pinnedNode, query.parentTransform(pinned, pinnedNode.id))!.x, 0, 0.01);
+});
+
+test('gradients default to object bounding box units', () => {
+  // Regression: the default unit was read as user space, so a gradient
+  // finished within the first 100px of whatever it filled.
+  const gradient = `<defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/>
+    <stop offset="1" stop-color="#00f"/></linearGradient></defs>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100">${gradient}
+    <rect x="0" y="0" width="400" height="100" fill="url(#g)"/></svg>`;
+  const node = query.allNodes(importSvg(svg).document).find((n) => n.type === 'path') as any;
+  assert.equal(node.fill.paint.type, 'linear');
+  close(node.fill.paint.from.x, 0, 0.01);
+  close(node.fill.paint.to.x, 400, 0.01);
+
+  // A shape offset from the origin gets the gradient over its own box.
+  const offset = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100">${gradient}
+    <rect x="100" y="0" width="200" height="100" fill="url(#g)"/></svg>`;
+  const offsetNode = query.allNodes(importSvg(offset).document).find((n) => n.type === 'path') as any;
+  close(offsetNode.fill.paint.from.x, 100, 0.01);
+  close(offsetNode.fill.paint.to.x, 300, 0.01);
+});
+
+test('userSpaceOnUse gradients keep their authored coordinates', () => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="100">
+    <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="10" y1="0" x2="60" y2="0">
+      <stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/>
+    </linearGradient></defs>
+    <rect x="0" y="0" width="400" height="100" fill="url(#g)"/></svg>`;
+  const node = query.allNodes(importSvg(svg).document).find((n) => n.type === 'path') as any;
+  close(node.fill.paint.from.x, 10, 0.01);
+  close(node.fill.paint.to.x, 60, 0.01);
+});
+
+test('a .vectar file with malformed objects loads without crashing', () => {
+  // Regression: node contents were trusted wholesale, so a path with no
+  // geometry parsed with no warning and then threw when measured.
+  const broken = JSON.stringify({
+    format: 'vectar', version: 1, name: 'broken', width: 100, height: 100,
+    layers: [{
+      type: 'layer', id: 'L', name: 'L', children: [
+        { type: 'path', id: 'a', name: 'no geometry' },
+        { type: 'path', id: 'b', name: 'bad geometry', path: { subpaths: 'nope' } },
+        { type: 'image', id: 'c', name: 'no href' },
+        { type: 'nonsense', id: 'd' },
+        { type: 'path', id: 'e', name: 'fine', path: { subpaths: [{ closed: true, anchors: [
+          { point: { x: 0, y: 0 } }, { point: { x: 10, y: 0 } }, { point: { x: 10, y: 10 } },
+        ] }] } },
+      ],
+    }],
+  });
+  const { document, warnings } = parseDocument(broken);
+  assert.ok(warnings.some((w) => /could not be read/.test(w)), `expected a warning, got ${JSON.stringify(warnings)}`);
+
+  const paths = query.allNodes(document).filter((n) => n.type === 'path');
+  assert.equal(paths.length, 1, 'only the usable path should survive');
+  assert.equal(paths[0].name, 'fine');
+  // Every surviving node must be safe to measure and serialize.
+  for (const node of query.allNodes(document)) {
+    assert.doesNotThrow(() => query.localBounds(node));
+  }
+  assert.doesNotThrow(() => exportSvg(document));
+});
+
+test('.vectar defaults fill in missing style and rejects a bogus blend mode', () => {
+  const partial = JSON.stringify({
+    format: 'vectar', version: 1, name: 'x', width: 10, height: 10,
+    layers: [{ type: 'layer', id: 'L', name: 'L', blendMode: 'not-a-mode', children: [
+      { type: 'path', id: 'p', name: 'p', path: { subpaths: [{ closed: false, anchors: [
+        { point: { x: 0, y: 0 } }, { point: { x: 5, y: 5 } },
+      ] }] } },
+    ] }],
+  });
+  const { document } = parseDocument(partial);
+  assert.equal(document.layers[0].blendMode, 'normal');
+  const node = query.allNodes(document).find((n) => n.type === 'path') as any;
+  assert.equal(node.stroke.width, 1);
+  assert.deepEqual(node.stroke.dash, []);
+  assert.equal(node.fill.rule, 'nonzero');
+});

@@ -21,6 +21,8 @@ export class CanvasView {
   private hoveredNodeId: string | null = null;
   /** Middle-drag or space-drag panning state. */
   private panning: { pointerId: number; lastX: number; lastY: number } | null = null;
+  /** Pointer captured for the active tool's gesture, if any. */
+  private capturedPointerId: number | null = null;
   private spaceHeld = false;
   /** Images decoded for image nodes, keyed by their href. */
   private imageCache = new Map<string, HTMLImageElement>();
@@ -154,6 +156,10 @@ export class CanvasView {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
+  private releaseCapture(pointerId: number): void {
+    if (this.element.hasPointerCapture(pointerId)) this.element.releasePointerCapture(pointerId);
+  }
+
   setHovered(id: string | null): void {
     if (this.hoveredNodeId === id) return;
     this.hoveredNodeId = id;
@@ -190,6 +196,17 @@ export class CanvasView {
         return;
       }
       if (event.button !== 0 && event.button !== 2) return;
+      // Capture so a drag that leaves the canvas still delivers move and up
+      // events here. Without it a gesture released outside the window left its
+      // live preview applied but never committed to history.
+      this.capturedPointerId = event.pointerId;
+      try {
+        this.element.setPointerCapture(event.pointerId);
+      } catch {
+        // Capture can be refused if the pointer is already gone; the gesture
+        // still works, it just cannot track outside the element.
+        this.capturedPointerId = null;
+      }
       this.activeTool?.onPointerDown?.(event, this.toDocumentPoint(event));
     });
 
@@ -207,9 +224,13 @@ export class CanvasView {
     const endPointer = (event: PointerEvent) => {
       if (this.panning && this.panning.pointerId === event.pointerId) {
         this.panning = null;
-        if (this.element.hasPointerCapture(event.pointerId)) this.element.releasePointerCapture(event.pointerId);
+        this.releaseCapture(event.pointerId);
         this.updateCursor();
         return;
+      }
+      if (this.capturedPointerId === event.pointerId) {
+        this.capturedPointerId = null;
+        this.releaseCapture(event.pointerId);
       }
       this.activeTool?.onPointerUp?.(event, this.toDocumentPoint(event));
     };

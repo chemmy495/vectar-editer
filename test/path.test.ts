@@ -175,3 +175,15 @@ test('star and polygon produce the expected vertex counts', () => {
   assert.equal(S.polygonPath(rect(0, 0, 10, 10), 6).subpaths[0].anchors.length, 6);
   assert.equal(S.starPath(rect(0, 0, 10, 10), 5).subpaths[0].anchors.length, 10);
 });
+
+test('stray data after Z terminates instead of looping forever', () => {
+  // Regression: the tokenizer never consumed a number following a
+  // zero-argument command, so it spun while growing the token list.
+  const p = parsePathData('M0 0 L10 10 Z 5');
+  assert.equal(p.subpaths.length, 1);
+  assert.equal(p.subpaths[0].closed, true);
+  assert.equal(p.subpaths[0].anchors.length, 2);
+  // A few other shapes of trailing junk after a close.
+  assert.equal(parsePathData('M0 0 L1 1 z 9 9 9').subpaths.length, 1);
+  assert.equal(parsePathData('M0 0 L1 1 Z M5 5 L6 6 Z 3').subpaths.length, 2);
+});

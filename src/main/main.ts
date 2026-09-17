@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, type FileFilter } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import { buildMenu } from './menu.ts';
-import { CHANNELS, type OpenFilter, type OpenedFile, type SaveRequest, type SaveResult } from './ipc.ts';
+import { CHANNELS, type MessageBoxOptions, type OpenFilter, type OpenedFile, type SaveRequest, type SaveResult } from './ipc.ts';
 
 const RASTER_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'avif'];
 
@@ -94,7 +94,26 @@ ipcMain.handle(CHANNELS.openFile, async (_event, filter: OpenFilter): Promise<Op
     filters: FILTERS[filter] ?? FILTERS.all,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
-  return Promise.all(result.filePaths.map((path) => readAsOpenedFile(path)));
+
+  // One unreadable file must not lose the rest of the selection.
+  const files: OpenedFile[] = [];
+  const failures: string[] = [];
+  for (const filePath of result.filePaths) {
+    try {
+      files.push(await readAsOpenedFile(filePath));
+    } catch (error) {
+      failures.push(`${basename(filePath)}: ${(error as Error).message}`);
+    }
+  }
+  if (failures.length > 0) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      message: failures.length === result.filePaths.length ? 'Could not open the file' : 'Some files could not be opened',
+      detail: failures.join('\n'),
+      buttons: ['OK'],
+    });
+  }
+  return files.length > 0 ? files : null;
 });
 
 ipcMain.handle(
@@ -119,17 +138,27 @@ ipcMain.handle(CHANNELS.saveFile, async (_event, request: SaveRequest): Promise<
     if (result.canceled || !result.filePath) return { cancelled: true };
     path = result.filePath;
   }
-  const buffer = Buffer.from(request.data, request.encoding === 'base64' ? 'base64' : 'utf8');
-  await writeFile(path, buffer);
-  return { path };
+  try {
+    const buffer = Buffer.from(request.data, request.encoding === 'base64' ? 'base64' : 'utf8');
+    await writeFile(path, buffer);
+    return { path };
+  } catch (error) {
+    // Reporting the failure rather than rejecting matters: this call is
+    // awaited by the close handshake, and a rejection there would leave the
+    // window unclosable.
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      message: 'Could not save the file',
+      detail: `${path}\n${(error as Error).message}`,
+      buttons: ['OK'],
+    });
+    return { error: (error as Error).message };
+  }
 });
 
 ipcMain.handle(
   CHANNELS.messageBox,
-  async (
-    _event,
-    options: { type: 'info' | 'warning' | 'error' | 'question'; message: string; detail?: string; buttons?: string[] },
-  ): Promise<number> => {
+  async (_event, options: MessageBoxOptions): Promise<number> => {
     if (!mainWindow) return 0;
     const result = await dialog.showMessageBox(mainWindow, {
       type: options.type,

@@ -1,4 +1,4 @@
-import { add, dist, len, normalize, perp, scale, sub, type Vec } from '../geometry/vec.ts';
+import { add, dist, len, neg, normalize, perp, scale, sub, type Vec } from '../geometry/vec.ts';
 import type { Cubic } from '../geometry/bezier.ts';
 import { subPathFromCubics, subPathFromPoints } from '../path/build.ts';
 import type { PathData, SubPath } from '../path/path.ts';
@@ -103,18 +103,26 @@ function tangentAt(points: readonly StrokePoint[], i: number): Vec {
   return { x: 1, y: 0 };
 }
 
-/** Semicircle from `from` to `to` around `center`, used for round caps. */
-function capArc(center: Vec, from: Vec, to: Vec, clockwise: boolean, steps = 8): Vec[] {
-  const startAngle = Math.atan2(from.y - center.y, from.x - center.x);
-  const endAngle = Math.atan2(to.y - center.y, to.x - center.x);
-  const radius = dist(center, from);
-  let sweep = endAngle - startAngle;
-  while (sweep <= 0 && clockwise) sweep += Math.PI * 2;
-  while (sweep >= 0 && !clockwise) sweep -= Math.PI * 2;
+/**
+ * Semicircular cap around `center`, running from `center + normal * radius` to
+ * `center - normal * radius` and bulging along `bulge`.
+ *
+ * The two cap endpoints are exactly opposite each other across the centre, so
+ * the arc is always half a turn; what matters is which way round it goes.
+ * Deriving it from the tangent rather than from the endpoint angles is what
+ * keeps the bulge outside the stroke instead of folding back into it.
+ * Endpoints are not emitted, since the caller already has them.
+ */
+function capArc(center: Vec, normal: Vec, bulge: Vec, radius: number, steps = 8): Vec[] {
   const result: Vec[] = [];
   for (let i = 1; i < steps; i++) {
-    const angle = startAngle + (sweep * i) / steps;
-    result.push({ x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius });
+    const t = (Math.PI * i) / steps;
+    const alongNormal = Math.cos(t) * radius;
+    const alongBulge = Math.sin(t) * radius;
+    result.push({
+      x: center.x + normal.x * alongNormal + bulge.x * alongBulge,
+      y: center.y + normal.y * alongNormal + bulge.y * alongBulge,
+    });
   }
   return result;
 }
@@ -141,20 +149,29 @@ export function brushOutlinePoints(points: readonly StrokePoint[], options: Brus
 
   const left: Vec[] = [];
   const right: Vec[] = [];
+  const normals: Vec[] = [];
+  const tangents: Vec[] = [];
   for (let i = 0; i < points.length; i++) {
-    const normal = perp(tangentAt(points, i));
+    const tangent = tangentAt(points, i);
+    const normal = perp(tangent);
+    tangents.push(tangent);
+    normals.push(normal);
     left.push(add(points[i], scale(normal, widths[i])));
     right.push(sub(points[i], scale(normal, widths[i])));
   }
 
+  // The outline runs up the left side, caps the far end, comes back down the
+  // right side, then caps the near end.
   const outline: Vec[] = [...left];
   const lastIndex = points.length - 1;
   if (options.roundCap) {
-    outline.push(...capArc(points[lastIndex], left[lastIndex], right[lastIndex], true));
+    // At the end the bulge points forward, past the final sample.
+    outline.push(...capArc(points[lastIndex], normals[lastIndex], tangents[lastIndex], widths[lastIndex]));
   }
   for (let i = lastIndex; i >= 0; i--) outline.push(right[i]);
   if (options.roundCap) {
-    outline.push(...capArc(points[0], right[0], left[0], true));
+    // At the start it points backward, and the arc begins on the right side.
+    outline.push(...capArc(points[0], neg(normals[0]), neg(tangents[0]), widths[0]));
   }
   return outline;
 }
