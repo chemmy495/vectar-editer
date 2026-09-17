@@ -1,16 +1,20 @@
 {
   "name": "vectar-editor",
   "version": "0.1.0",
-  "description": "Vectar Editor - a vector graphics editor for Windows with raster image vectorization",
+  "description": "Vectar Editor - a Windows vector graphics editor that imports images, reproduces them as vector data, and exports to many formats",
   "license": "CC0-1.0",
   "main": "dist/main/main.js",
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import ./scripts/ts-loader.mjs test/**/*.test.ts",
+    "test": "node --test test/*.test.ts",
+    "check": "npm run typecheck && npm test",
     "start": "npm run build && electron .",
-    "dist:win": "npm run build && electron-builder --win --publish never"
+    "dev": "node scripts/build.mjs --dev && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:win:portable": "npm run build && electron-builder --win portable --publish never"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -18,5 +22,65 @@
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.2"
+  },
+  "author": {
+    "name": "Vectar Editor contributors"
+  },
+  "build": {
+    "appId": "io.github.chemmy495.vectar-editor",
+    "productName": "Vectar Editor",
+    "copyright": "Released under CC0 1.0 Universal",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "fileAssociations": [
+        {
+          "ext": "vectar",
+          "name": "Vectar Document",
+          "description": "Vectar vector document",
+          "role": "Editor"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vectar Editor"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics",
+      "icon": "build/icon.png"
+    }
   }
 }
