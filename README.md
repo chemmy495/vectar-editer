@@ -92,6 +92,9 @@ on Windows needs nothing extra.
 
 ## Project layout
 
+For a fuller walk-through of the modules, the layering rules and the main data
+flows, see [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
+
 ```
 src/core/           platform-agnostic, no runtime dependencies
   geometry/         vectors, affine matrices, rectangles, cubic beziers

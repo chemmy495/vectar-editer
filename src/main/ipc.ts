@@ -58,7 +58,6 @@ export const CHANNELS = {
   readFile: 'vectar:readFile',
   menuCommand: 'vectar:menuCommand',
   setTitle: 'vectar:setTitle',
-  setDirty: 'vectar:setDirty',
   confirmClose: 'vectar:confirmClose',
   requestClose: 'vectar:requestClose',
   messageBox: 'vectar:messageBox',
