@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'"
+    />
+    <title>Vectar Editor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="toolbar" class="toolbar" aria-label="Tools"></aside>
+      <main id="workspace" class="workspace">
+        <div id="viewport" class="viewport"></div>
+        <div id="statusbar" class="statusbar" role="status"></div>
+      </main>
+      <aside id="sidebar" class="sidebar">
+        <div id="properties" class="panel properties"></div>
+        <div id="layers" class="panel layers"></div>
+      </aside>
+    </div>
+    <script src="main.js"></script>
+  </body>
+</html>
