@@ -1,7 +1,7 @@
 import { compose, rotation, scaling, translation, type Matrix } from '../../core/geometry/matrix.ts';
 import { fromCorners, type Rect } from '../../core/geometry/rect.ts';
 import type { Vec } from '../../core/geometry/vec.ts';
-import * as ops from '../../core/model/ops.ts';
+import * as commands from '../../core/model/commands.ts';
 import type { Command } from '../../core/model/history.ts';
 import * as query from '../../core/model/query.ts';
 import type { NodeId } from '../../core/model/node.ts';
@@ -35,7 +35,7 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
   /** Live preview transform applied while a gesture is in flight. */
   const applyLive = (matrix: Matrix, ids: NodeId[], previous: Command | null): Command => {
     previous?.undo();
-    const command = ops.transformNodes(editor.document, ids, matrix);
+    const command = commands.transformNodes(editor.document, ids, matrix);
     command.redo();
     editor.emit('document');
     return command;
@@ -229,7 +229,7 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
       if (!delta || editor.selection.size === 0) return false;
       event.preventDefault();
       editor.transaction('Nudge', () => {
-        editor.run(ops.transformNodes(editor.document, [...editor.selection], translation(delta.x, delta.y)));
+        editor.run(commands.transformNodes(editor.document, [...editor.selection], translation(delta.x, delta.y)));
       });
       return true;
     },

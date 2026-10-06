@@ -1,4 +1,4 @@
-import { add, dist, distSq, lerp, scale, sub, type Vec } from './vec.ts';
+import { distSq, lerp, sub, type Vec } from './vec.ts';
 import { fromPoints, type Rect } from './rect.ts';
 
 /** A cubic bezier segment: start, two control points, end. */
@@ -151,9 +151,6 @@ export function length(c: Cubic): number {
   return 0.5 * sum;
 }
 
-/** Straight-line distance from start to end, a cheap length lower bound. */
-export const chordLength = (c: Cubic): number => dist(c[0], c[3]);
-
 /** Finds the `t` on `c` nearest to `p` by coarse sampling then local refinement. */
 export function nearestT(c: Cubic, p: Vec, samples = 32): { t: number; point: Vec; distance: number } {
   let bestT = 0;
@@ -185,32 +182,6 @@ export function nearestT(c: Cubic, p: Vec, samples = 32): { t: number; point: Ve
 /** Builds the cubic that draws the straight line from `a` to `b`. */
 export function fromLine(a: Vec, b: Vec): Cubic {
   return [a, lerp(a, b, 1 / 3), lerp(a, b, 2 / 3), b];
-}
-
-/** Transforms the curve by moving every control point with `fn`. */
-export function mapPoints(c: Cubic, fn: (p: Vec) => Vec): Cubic {
-  return [fn(c[0]), fn(c[1]), fn(c[2]), fn(c[3])];
-}
-
-/**
- * Offsets the four control points along the curve normal, an approximation
- * that is good enough for the small offsets brush outlines need.
- */
-export function offsetApprox(c: Cubic, distance: number): Cubic {
-  const normalAt = (t: number): Vec => {
-    const d = derivative(c, t);
-    const l = Math.hypot(d.x, d.y);
-    if (l === 0) return { x: 0, y: 0 };
-    return { x: -d.y / l, y: d.x / l };
-  };
-  const n0 = normalAt(0);
-  const n1 = normalAt(1);
-  return [
-    add(c[0], scale(n0, distance)),
-    add(c[1], scale(n0, distance)),
-    add(c[2], scale(n1, distance)),
-    add(c[3], scale(n1, distance)),
-  ];
 }
 
 /** Signed area contribution of the curve, used for winding/orientation tests. */

@@ -89,27 +89,6 @@ export function parentTransform(doc: VectarDocument, id: NodeId): Matrix {
   return compose(...location.ancestors.map((a) => a.transform));
 }
 
-/** Effective opacity, including every ancestor's. */
-export function worldOpacity(doc: VectarDocument, id: NodeId): number {
-  const location = findNode(doc, id);
-  if (!location) return 1;
-  return [...location.ancestors, location.node].reduce((acc, n) => acc * n.opacity, 1);
-}
-
-/** True when the node and all its ancestors are visible. */
-export function isEffectivelyVisible(doc: VectarDocument, id: NodeId): boolean {
-  const location = findNode(doc, id);
-  if (!location) return false;
-  return [...location.ancestors, location.node].every((n) => n.visible);
-}
-
-/** True when the node or any ancestor is locked. */
-export function isEffectivelyLocked(doc: VectarDocument, id: NodeId): boolean {
-  const location = findNode(doc, id);
-  if (!location) return false;
-  return [...location.ancestors, location.node].some((n) => n.locked);
-}
-
 /** Bounds in the node's own local coordinates, ignoring its own transform. */
 export function localBounds(node: SceneNode, measure: TextMeasurer = estimateTextBounds): Rect | null {
   switch (node.type) {

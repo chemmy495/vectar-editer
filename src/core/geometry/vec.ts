@@ -10,7 +10,6 @@ export const neg = (a: Vec): Vec => ({ x: -a.x, y: -a.y });
 export const dot = (a: Vec, b: Vec): number => a.x * b.x + a.y * b.y;
 export const cross = (a: Vec, b: Vec): number => a.x * b.y - a.y * b.x;
 export const len = (a: Vec): number => Math.hypot(a.x, a.y);
-export const lenSq = (a: Vec): number => a.x * a.x + a.y * a.y;
 export const dist = (a: Vec, b: Vec): number => Math.hypot(a.x - b.x, a.y - b.y);
 export const distSq = (a: Vec, b: Vec): number => {
   const dx = a.x - b.x;
@@ -44,5 +43,3 @@ export const angle = (a: Vec): number => Math.atan2(a.y, a.x);
 
 export const equals = (a: Vec, b: Vec, epsilon = 1e-9): boolean =>
   Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon;
-
-export const clone = (a: Vec): Vec => ({ x: a.x, y: a.y });

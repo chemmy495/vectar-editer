@@ -4,6 +4,7 @@ import { createGroupNode, createImageNode, type SceneNode } from '../core/model/
 import { importSvg } from '../core/io/svg/import.ts';
 import { exportSvg } from '../core/io/svg/export.ts';
 import { exportPdf } from '../core/io/pdf/export.ts';
+import { encodeBmp } from '../core/io/bmp/export.ts';
 import { parseDocument, serializeDocument } from '../core/io/vectar.ts';
 import { renderForExport } from '../core/render/render.ts';
 import { traceImage, TRACE_PRESETS, DEFAULT_TRACE_OPTIONS, type TraceOptions } from '../core/trace/trace.ts';
@@ -514,42 +515,4 @@ function showExportDialog(editor: Editor): Promise<ExportChoice | null> {
   );
 }
 
-/**
- * Encodes RGBA pixels as an uncompressed 24-bit BMP, which the canvas API
- * cannot produce on its own.
- */
-export function encodeBmp(pixels: Uint8ClampedArray, width: number, height: number): Uint8Array {
-  const rowSize = Math.ceil((width * 3) / 4) * 4;
-  const pixelDataSize = rowSize * height;
-  const fileSize = 54 + pixelDataSize;
-  const bytes = new Uint8Array(fileSize);
-  const view = new DataView(bytes.buffer);
 
-  bytes[0] = 0x42; // 'B'
-  bytes[1] = 0x4d; // 'M'
-  view.setUint32(2, fileSize, true);
-  view.setUint32(10, 54, true);
-  view.setUint32(14, 40, true);
-  view.setInt32(18, width, true);
-  view.setInt32(22, height, true);
-  view.setUint16(26, 1, true);
-  view.setUint16(28, 24, true);
-  view.setUint32(34, pixelDataSize, true);
-  view.setInt32(38, 2835, true);
-  view.setInt32(42, 2835, true);
-
-  // BMP rows run bottom-up and store colours as BGR.
-  for (let y = 0; y < height; y++) {
-    const sourceRow = (height - 1 - y) * width * 4;
-    let target = 54 + y * rowSize;
-    for (let x = 0; x < width; x++) {
-      const source = sourceRow + x * 4;
-      const alpha = pixels[source + 3] / 255;
-      // Composite onto white, since 24-bit BMP has no alpha channel.
-      bytes[target++] = Math.round(pixels[source + 2] * alpha + 255 * (1 - alpha));
-      bytes[target++] = Math.round(pixels[source + 1] * alpha + 255 * (1 - alpha));
-      bytes[target++] = Math.round(pixels[source] * alpha + 255 * (1 - alpha));
-    }
-  }
-  return bytes;
-}

@@ -5,7 +5,7 @@ import {
   createGroupNode, createLayerNode, createPathNode, createTextNode, cloneNode,
 } from '../src/core/model/node.ts';
 import { History } from '../src/core/model/history.ts';
-import * as ops from '../src/core/model/ops.ts';
+import * as commands from '../src/core/model/commands.ts';
 import * as query from '../src/core/model/query.ts';
 import { rectanglePath } from '../src/core/path/shapes.ts';
 import { rect } from '../src/core/geometry/rect.ts';
@@ -110,7 +110,7 @@ test('history undo and redo restore state', () => {
   const doc = createDocument();
   const history = new History();
   const node = createPathNode(rectanglePath(rect(0, 0, 10, 10)));
-  history.execute(ops.addNodes(doc, doc.layers[0], [node]));
+  history.execute(commands.addNodes(doc, doc.layers[0], [node]));
   assert.equal(doc.layers[0].children.length, 1);
   history.undo();
   assert.equal(doc.layers[0].children.length, 0);
@@ -123,7 +123,7 @@ test('history groups a transaction into one undo step', () => {
   const doc = createDocument();
   const history = new History();
   history.transaction('Add three', () => {
-    for (let i = 0; i < 3; i++) history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+    for (let i = 0; i < 3; i++) history.execute(commands.addNodes(doc, doc.layers[0], [createPathNode()]));
   });
   assert.equal(history.depth(), 1);
   assert.equal(doc.layers[0].children.length, 3);
@@ -136,7 +136,7 @@ test('a throwing transaction rolls back', () => {
   const history = new History();
   assert.throws(() => {
     history.transaction('Broken', () => {
-      history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+      history.execute(commands.addNodes(doc, doc.layers[0], [createPathNode()]));
       throw new Error('boom');
     });
   }, /boom/);
@@ -149,7 +149,7 @@ test('removeNodes restores position on undo', () => {
   const nodes = [createPathNode(undefined, 'a'), createPathNode(undefined, 'b'), createPathNode(undefined, 'c')];
   doc.layers[0].children.push(...nodes);
   const history = new History();
-  history.execute(ops.removeNodes(doc, [nodes[1].id]));
+  history.execute(commands.removeNodes(doc, [nodes[1].id]));
   assert.deepEqual(doc.layers[0].children.map((n) => n.name), ['a', 'c']);
   history.undo();
   assert.deepEqual(doc.layers[0].children.map((n) => n.name), ['a', 'b', 'c']);
@@ -158,7 +158,7 @@ test('removeNodes restores position on undo', () => {
 test('transformNodes moves a node and undoes exactly', () => {
   const { doc, node } = docWithRect(0, 0, 100, 50);
   const history = new History();
-  history.execute(ops.transformNodes(doc, [node.id], translation(25, 15)));
+  history.execute(commands.transformNodes(doc, [node.id], translation(25, 15)));
   const moved = query.worldBounds(node, query.parentTransform(doc, node.id))!;
   close(moved.x, 25);
   close(moved.y, 15);
@@ -175,7 +175,7 @@ test('transformNodes compensates for the parent transform', () => {
   doc.layers[0].children.push(group);
 
   const history = new History();
-  history.execute(ops.transformNodes(doc, [node.id], translation(20, 0)));
+  history.execute(commands.transformNodes(doc, [node.id], translation(20, 0)));
   const world = query.worldBounds(node, query.parentTransform(doc, node.id))!;
   close(world.x, 20); // The drag distance is honoured in document space.
   close(world.width, 20);
@@ -188,16 +188,16 @@ test('reorderNodes handles front, back and single steps', () => {
   const names = () => doc.layers[0].children.map((n) => n.name);
   const history = new History();
 
-  history.execute(ops.reorderNodes(doc, [nodes[0].id], 'front'));
+  history.execute(commands.reorderNodes(doc, [nodes[0].id], 'front'));
   assert.deepEqual(names(), ['b', 'c', 'a']);
   history.undo();
   assert.deepEqual(names(), ['a', 'b', 'c']);
 
-  history.execute(ops.reorderNodes(doc, [nodes[2].id], 'back'));
+  history.execute(commands.reorderNodes(doc, [nodes[2].id], 'back'));
   assert.deepEqual(names(), ['c', 'a', 'b']);
   history.undo();
 
-  history.execute(ops.reorderNodes(doc, [nodes[0].id], 'forward'));
+  history.execute(commands.reorderNodes(doc, [nodes[0].id], 'forward'));
   assert.deepEqual(names(), ['b', 'a', 'c']);
 });
 
@@ -209,7 +209,7 @@ test('group then ungroup keeps world positions', () => {
   const before = query.selectionBounds(doc, [a.id, b.id])!;
 
   const history = new History();
-  const grouped = ops.groupNodes(doc, [a.id, b.id])!;
+  const grouped = commands.groupNodes(doc, [a.id, b.id])!;
   history.execute(grouped.command);
   assert.equal(doc.layers[0].children.length, 1);
   assert.equal(doc.layers[0].children[0].id, grouped.group.id);
@@ -218,7 +218,7 @@ test('group then ungroup keeps world positions', () => {
   close(afterGroup.x, before.x);
   close(afterGroup.width, before.width);
 
-  history.execute(ops.ungroupNodes(doc, [grouped.group.id])!);
+  history.execute(commands.ungroupNodes(doc, [grouped.group.id])!);
   assert.deepEqual(doc.layers[0].children.map((n) => n.name), ['a', 'b']);
   const afterUngroup = query.selectionBounds(doc, [a.id, b.id])!;
   close(afterUngroup.x, before.x);
@@ -232,7 +232,7 @@ test('ungroup applies the group transform to children', () => {
   group.transform = translation(100, 0);
   doc.layers[0].children.push(group);
 
-  new History().execute(ops.ungroupNodes(doc, [group.id])!);
+  new History().execute(commands.ungroupNodes(doc, [group.id])!);
   const bounds = query.worldBounds(child, query.parentTransform(doc, child.id))!;
   close(bounds.x, 100);
 });
@@ -246,7 +246,7 @@ test('reparentNodes keeps the node in place on screen', () => {
   doc.layers[0].children.push(node);
   const before = query.worldBounds(node, query.parentTransform(doc, node.id))!;
 
-  new History().execute(ops.reparentNodes(doc, [node.id], target)!);
+  new History().execute(commands.reparentNodes(doc, [node.id], target)!);
   assert.equal(target.children.length, 1);
   assert.equal(doc.layers[0].children.length, 0);
   const after = query.worldBounds(node, query.parentTransform(doc, node.id))!;
@@ -256,7 +256,7 @@ test('reparentNodes keeps the node in place on screen', () => {
 test('patchNode records the old value', () => {
   const { doc, node } = docWithRect();
   const history = new History();
-  history.execute(ops.patchNode(doc, node.id, { name: 'Renamed', opacity: 0.5 })!);
+  history.execute(commands.patchNode(doc, node.id, { name: 'Renamed', opacity: 0.5 })!);
   assert.equal(node.name, 'Renamed');
   assert.equal(node.opacity, 0.5);
   history.undo();
@@ -267,7 +267,7 @@ test('patchNode records the old value', () => {
 test('setPath swaps geometry and restores it', () => {
   const { doc, node } = docWithRect(0, 0, 10, 10);
   const history = new History();
-  history.execute(ops.setPath(doc, node.id, rectanglePath(rect(0, 0, 99, 99)))!);
+  history.execute(commands.setPath(doc, node.id, rectanglePath(rect(0, 0, 99, 99)))!);
   close(query.localBounds(node)!.width, 99);
   history.undo();
   close(query.localBounds(node)!.width, 10);
@@ -275,11 +275,11 @@ test('setPath swaps geometry and restores it', () => {
 
 test('layers cannot all be deleted', () => {
   const doc = createDocument();
-  assert.equal(ops.removeLayer(doc, doc.layers[0].id), null);
-  const added = ops.addLayer(doc);
+  assert.equal(commands.removeLayer(doc, doc.layers[0].id), null);
+  const added = commands.addLayer(doc);
   new History().execute(added.command);
   assert.equal(doc.layers.length, 2);
-  assert.ok(ops.removeLayer(doc, added.layer.id));
+  assert.ok(commands.removeLayer(doc, added.layer.id));
 });
 
 test('cloneNode with new ids produces an independent copy', () => {
@@ -318,9 +318,9 @@ test('lastCommand identifies the top of the undo stack across undo and redo', ()
   const history = new History();
   assert.equal(history.lastCommand(), null);
 
-  const first = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'a')]);
+  const first = commands.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'a')]);
   history.execute(first);
-  const second = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'b')]);
+  const second = commands.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'b')]);
   history.execute(second);
   assert.equal(history.lastCommand(), second);
 
@@ -335,7 +335,7 @@ test('lastCommand identifies the top of the undo stack across undo and redo', ()
   assert.equal(history.lastCommand(), saved);
 
   history.undo();
-  const replacement = ops.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'c')]);
+  const replacement = commands.addNodes(doc, doc.layers[0], [createPathNode(undefined, 'c')]);
   history.execute(replacement);
   assert.equal(history.depth(), 2, 'same depth as when it was saved');
   assert.notEqual(history.lastCommand(), saved, 'but a different document state');
@@ -349,10 +349,10 @@ test('lastCommand still differs from a saved state once the stack saturates', ()
   // states at all; identity still can.
   const doc = createDocument();
   const history = new History(3);
-  history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+  history.execute(commands.addNodes(doc, doc.layers[0], [createPathNode()]));
   const saved = history.lastCommand();
   for (let i = 0; i < 5; i++) {
-    history.execute(ops.addNodes(doc, doc.layers[0], [createPathNode()]));
+    history.execute(commands.addNodes(doc, doc.layers[0], [createPathNode()]));
   }
   assert.equal(history.depth(), 3, 'the stack is capped');
   assert.notEqual(history.lastCommand(), saved);

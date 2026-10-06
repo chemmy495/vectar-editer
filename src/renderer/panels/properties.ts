@@ -5,7 +5,7 @@ import {
   cloneFill, cloneStroke, isFillVisible, isStrokeVisible, paintColor, solidPaint,
   type Fill, type LineCap, type LineJoin, type Stroke,
 } from '../../core/model/style.ts';
-import * as ops from '../../core/model/ops.ts';
+import * as commands from '../../core/model/commands.ts';
 import type { PathNode, TextNode } from '../../core/model/node.ts';
 import type { VectarDocument } from '../../core/model/document.ts';
 import type { Editor } from '../editor.ts';
@@ -228,7 +228,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     const moveTo = (axis: 'x' | 'y', value: number) => {
       const delta = axis === 'x' ? { x: value - bounds.x, y: 0 } : { x: 0, y: value - bounds.y };
       editor.transaction('Move', () => {
-        editor.run(ops.transformNodes(editor.document, ids, translation(delta.x, delta.y)));
+        editor.run(commands.transformNodes(editor.document, ids, translation(delta.x, delta.y)));
       });
     };
 
@@ -242,7 +242,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
         translation(-bounds.x, -bounds.y),
       );
       editor.transaction('Resize', () => {
-        editor.run(ops.transformNodes(editor.document, ids, matrix));
+        editor.run(commands.transformNodes(editor.document, ids, matrix));
       });
     };
 
@@ -254,7 +254,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
         translation(-center.x, -center.y),
       );
       editor.transaction('Rotate', () => {
-        editor.run(ops.transformNodes(editor.document, ids, matrix));
+        editor.run(commands.transformNodes(editor.document, ids, matrix));
       });
     };
 
@@ -266,7 +266,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
         translation(-center.x, -center.y),
       );
       editor.transaction('Flip', () => {
-        editor.run(ops.transformNodes(editor.document, ids, matrix));
+        editor.run(commands.transformNodes(editor.document, ids, matrix));
       });
     };
 
@@ -291,7 +291,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
       field('Opacity', numberInput(Math.round((single?.opacity ?? 1) * 100), (value) => {
         const opacity = Math.max(0, Math.min(1, value / 100));
         editor.transaction('Change opacity', () => {
-          editor.run(ops.patchNodes(editor.document, ids, { opacity }, 'Change opacity'));
+          editor.run(commands.patchNodes(editor.document, ids, { opacity }, 'Change opacity'));
         });
       }, { min: 0, max: 100 })),
     ]);
@@ -303,7 +303,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     const first = nodes[0];
     const patch = (values: Partial<TextNode>) => {
       editor.transaction('Change text style', () => {
-        for (const node of nodes) editor.run(ops.patchNode<TextNode>(editor.document, node.id, values, 'Change text style'));
+        for (const node of nodes) editor.run(commands.patchNode<TextNode>(editor.document, node.id, values, 'Change text style'));
       });
     };
 

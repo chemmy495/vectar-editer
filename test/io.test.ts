@@ -4,6 +4,7 @@ import { parseXml, findAll, escapeXml, decodeEntities, element } from '../src/co
 import { importSvg, parseLength } from '../src/core/io/svg/import.ts';
 import { exportSvg } from '../src/core/io/svg/export.ts';
 import { exportPdf } from '../src/core/io/pdf/export.ts';
+import { encodeBmp } from '../src/core/io/bmp/export.ts';
 import { serializeDocument, parseDocument, cloneDocument } from '../src/core/io/vectar.ts';
 import { createDocument } from '../src/core/model/document.ts';
 import { createPathNode, createTextNode, createGroupNode } from '../src/core/model/node.ts';
@@ -447,4 +448,59 @@ test('.vectar defaults fill in missing style and rejects a bogus blend mode', ()
   assert.equal(node.stroke.width, 1);
   assert.deepEqual(node.stroke.dash, []);
   assert.equal(node.fill.rule, 'nonzero');
+});
+
+test('encodeBmp writes a readable 24-bit bitmap', () => {
+  // Two pixels wide so the 4-byte row padding is exercised: 2 x 3 bytes = 6,
+  // padded to 8.
+  const width = 2;
+  const height = 2;
+  const pixels = new Uint8ClampedArray(width * height * 4);
+  const put = (x: number, y: number, r: number, g: number, b: number, a = 255) => {
+    const o = (y * width + x) * 4;
+    pixels[o] = r; pixels[o + 1] = g; pixels[o + 2] = b; pixels[o + 3] = a;
+  };
+  put(0, 0, 255, 0, 0);
+  put(1, 0, 0, 255, 0);
+  put(0, 1, 0, 0, 255);
+  put(1, 1, 0, 0, 0);
+
+  const bytes = encodeBmp(pixels, width, height);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  assert.equal(String.fromCharCode(bytes[0], bytes[1]), 'BM');
+  assert.equal(view.getUint32(2, true), bytes.length, 'the header must state the real file size');
+  const pixelOffset = view.getUint32(10, true);
+  assert.equal(pixelOffset, 54);
+  assert.equal(view.getUint32(14, true), 40, 'BITMAPINFOHEADER');
+  assert.equal(view.getInt32(18, true), width);
+  assert.equal(view.getInt32(22, true), height);
+  assert.equal(view.getUint16(26, true), 1, 'one colour plane');
+  assert.equal(view.getUint16(28, true), 24, '24 bits per pixel');
+
+  const rowSize = Math.ceil((width * 3) / 4) * 4;
+  assert.equal(rowSize, 8);
+  assert.equal(bytes.length, 54 + rowSize * height);
+
+  // Rows run bottom-up and channels are stored BGR, so the first row of pixel
+  // data is the bottom row of the image.
+  const pixelAt = (x: number, y: number) => {
+    const row = height - 1 - y;
+    const o = pixelOffset + row * rowSize + x * 3;
+    return [bytes[o + 2], bytes[o + 1], bytes[o]]; // back to RGB
+  };
+  assert.deepEqual(pixelAt(0, 0), [255, 0, 0]);
+  assert.deepEqual(pixelAt(1, 0), [0, 255, 0]);
+  assert.deepEqual(pixelAt(0, 1), [0, 0, 255]);
+  assert.deepEqual(pixelAt(1, 1), [0, 0, 0]);
+});
+
+test('encodeBmp composites transparency onto white', () => {
+  const pixels = new Uint8ClampedArray([0, 0, 0, 0, 0, 0, 0, 128]);
+  const bytes = encodeBmp(pixels, 2, 1);
+  const offset = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(10, true);
+  // Fully transparent black becomes white; half-transparent lands midway.
+  assert.deepEqual([bytes[offset], bytes[offset + 1], bytes[offset + 2]], [255, 255, 255]);
+  const half = bytes[offset + 3];
+  assert.ok(half > 120 && half < 136, `expected about 128, got ${half}`);
 });

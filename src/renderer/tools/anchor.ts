@@ -3,7 +3,7 @@ import { add, dist, len, normalize, scale, sub, type Vec } from '../../core/geom
 import { fromCorners } from '../../core/geometry/rect.ts';
 import { clonePath, insertAnchor, nearestPoint, type PathData } from '../../core/path/path.ts';
 import type { PathNode } from '../../core/model/node.ts';
-import * as ops from '../../core/model/ops.ts';
+import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import type { Command } from '../../core/model/history.ts';
 import { anchorKey, parseAnchorKey, type Editor } from '../editor.ts';
@@ -23,8 +23,11 @@ type Gesture =
 /**
  * Direct path editing: select anchors, drag them or their bezier handles,
  * add anchors by clicking the outline, and delete them with Delete.
+ *
+ * The UI calls this the node tool, following other vector editors. Inside the
+ * codebase a node is a `SceneNode`, so everything here says anchor instead.
  */
-export function createNodeTool(editor: Editor, canvas: CanvasView): Tool {
+export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
   let gesture: Gesture = { kind: 'none' };
 
   const activePath = (): PathNode | null => {
@@ -47,10 +50,10 @@ export function createNodeTool(editor: Editor, canvas: CanvasView): Tool {
   };
 
   const selectedKeys = (): Set<string> =>
-    editor.nodeSelection?.anchors ?? new Set<string>();
+    editor.anchorSelection?.anchors ?? new Set<string>();
 
   const setSelectedKeys = (node: PathNode, keys: Set<string>) => {
-    editor.nodeSelection = { nodeId: node.id, anchors: keys };
+    editor.anchorSelection = { nodeId: node.id, anchors: keys };
     editor.emit('selection');
   };
 
@@ -297,7 +300,7 @@ export function createNodeTool(editor: Editor, canvas: CanvasView): Tool {
         updated.subpaths = updated.subpaths.filter((subpath) => subpath.anchors.length > 1);
         if (updated.subpaths.length === 0) {
           editor.transaction('Delete path', () => {
-            editor.run(ops.removeNodes(editor.document, [node.id]));
+            editor.run(commands.removeNodes(editor.document, [node.id]));
           });
           editor.clearSelection();
           return true;

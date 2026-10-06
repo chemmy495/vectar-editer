@@ -8,7 +8,7 @@ import { createLayersPanel } from './panels/layers.ts';
 import { createPropertiesPanel } from './panels/properties.ts';
 import { createStatusBar } from './panels/statusbar.ts';
 import { createSelectTool } from './tools/select.ts';
-import { createNodeTool } from './tools/node.ts';
+import { createAnchorTool } from './tools/anchor.ts';
 import { createPenTool } from './tools/pen.ts';
 import { createFreehandTool } from './tools/freehand.ts';
 import { createShapeTool } from './tools/shape.ts';
@@ -17,8 +17,8 @@ import { createEyedropperTool, createPanTool, createZoomTool } from './tools/uti
 import {
   clearFlagEverywhere, convertSelectionToPaths, groupSelection, reorderSelection,
   reverseSelectedPaths, setSelectionFlag, simplifySelectedPaths, ungroupSelection,
-} from './commands.ts';
-import * as ops from '../core/model/ops.ts';
+} from './editing.ts';
+import * as commands from '../core/model/commands.ts';
 import type { MenuCommand } from '../main/ipc.ts';
 
 const SHORTCUTS: Array<[string, string]> = [
@@ -48,7 +48,7 @@ function main(): void {
 
   // --- tools -------------------------------------------------------------
   canvas.registerTool(createSelectTool(editor, canvas));
-  canvas.registerTool(createNodeTool(editor, canvas));
+  canvas.registerTool(createAnchorTool(editor, canvas));
   canvas.registerTool(createPenTool(editor, canvas));
   canvas.registerTool(createFreehandTool(editor, canvas, 'pencil'));
   canvas.registerTool(createFreehandTool(editor, canvas, 'brush'));
@@ -163,11 +163,11 @@ function main(): void {
   const runLayerCommand = (action: 'add' | 'delete') => {
     // The layers panel owns the buttons; the menu reuses the same operations.
     if (action === 'add') {
-      const added = ops.addLayer(editor.document);
+      const added = commands.addLayer(editor.document);
       editor.transaction('Add layer', () => editor.run(added.command));
       editor.setActiveLayer(added.layer.id);
     } else {
-      const command = ops.removeLayer(editor.document, editor.activeLayerId);
+      const command = commands.removeLayer(editor.document, editor.activeLayerId);
       if (!command) {
         editor.setStatus('A document needs at least one layer');
         return;

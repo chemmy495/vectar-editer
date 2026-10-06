@@ -5,7 +5,6 @@ export const rgba = (r: number, g: number, b: number, a = 1): RGBA => ({ r, g, b
 
 export const BLACK: RGBA = { r: 0, g: 0, b: 0, a: 1 };
 export const WHITE: RGBA = { r: 255, g: 255, b: 255, a: 1 };
-export const TRANSPARENT: RGBA = { r: 0, g: 0, b: 0, a: 0 };
 
 const clamp255 = (v: number): number => Math.max(0, Math.min(255, Math.round(v)));
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
@@ -114,9 +113,6 @@ export const toHexA = (c: RGBA): string =>
 export const toCss = (c: RGBA): string =>
   c.a >= 1 ? toHex(c) : `rgba(${clamp255(c.r)}, ${clamp255(c.g)}, ${clamp255(c.b)}, ${Number(c.a.toFixed(4))})`;
 
-export const colorEquals = (a: RGBA, b: RGBA): boolean =>
-  a.r === b.r && a.g === b.g && a.b === b.b && Math.abs(a.a - b.a) < 1e-6;
-
 /** Perceptual-ish squared distance, weighted for human luminance sensitivity. */
 export function colorDistanceSq(a: RGBA, b: RGBA): number {
   const rMean = (a.r + b.r) / 2;
@@ -127,13 +123,3 @@ export function colorDistanceSq(a: RGBA, b: RGBA): number {
 }
 
 export const luminance = (c: RGBA): number => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-
-export function mixColors(a: RGBA, b: RGBA, t: number): RGBA {
-  const k = clamp01(t);
-  return normalizeColor({
-    r: a.r + (b.r - a.r) * k,
-    g: a.g + (b.g - a.g) * k,
-    b: a.b + (b.b - a.b) * k,
-    a: a.a + (b.a - a.a) * k,
-  });
-}

@@ -101,28 +101,6 @@ export function bounds(path: PathData): Rect | null {
   return sawPoint ? unionAll(rects) : null;
 }
 
-/** Bounding box of anchors and handles, which is what selection UI needs. */
-export function controlBounds(path: PathData): Rect | null {
-  const points: Vec[] = [];
-  for (const sp of path.subpaths) {
-    for (const a of sp.anchors) {
-      points.push(a.point, add(a.point, a.inHandle), add(a.point, a.outHandle));
-    }
-  }
-  if (points.length === 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
-}
-
 export function transformPath(path: PathData, m: Matrix): PathData {
   return {
     subpaths: path.subpaths.map((sp) => ({
@@ -151,12 +129,6 @@ export function flattenPath(path: PathData, tolerance = 0.25): Vec[][] {
     result.push(points);
   }
   return result;
-}
-
-export function pathLength(path: PathData): number {
-  let total = 0;
-  for (const { curve } of segments(path)) total += bezier.length(curve);
-  return total;
 }
 
 /** Sum of subpath signed areas; positive means mostly clockwise in screen space. */
@@ -226,23 +198,6 @@ export function nearestPoint(
 export function isNearOutline(path: PathData, p: Vec, tolerance: number): boolean {
   const near = nearestPoint(path, p);
   return near !== null && near.distance <= tolerance;
-}
-
-/** Builds a path from a list of polylines, with straight segments between points. */
-export function fromPolylines(polylines: readonly (readonly Vec[])[], closed = false): PathData {
-  return {
-    subpaths: polylines
-      .filter((poly) => poly.length > 0)
-      .map((poly) => ({
-        closed,
-        anchors: poly.map((p) => anchor(p)),
-      })),
-  };
-}
-
-/** Appends `other`'s subpaths to `path`, returning a new path. */
-export function concatPaths(path: PathData, other: PathData): PathData {
-  return { subpaths: [...clonePath(path).subpaths, ...clonePath(other).subpaths] };
 }
 
 /**

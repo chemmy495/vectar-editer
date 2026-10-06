@@ -1,3 +1,7 @@
+/**
+ * Every editing operation, expressed as a `Command` that the caller decides
+ * when to apply. Nothing here mutates the document on its own.
+ */
 import { compose, invert, multiply, type Matrix } from '../geometry/matrix.ts';
 import { clonePath, type PathData } from '../path/path.ts';
 import type { VectarDocument } from './document.ts';

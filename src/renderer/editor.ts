@@ -1,19 +1,20 @@
-import { identity, type Matrix } from '../core/geometry/matrix.ts';
+import type { Matrix } from '../core/geometry/matrix.ts';
 import type { Rect } from '../core/geometry/rect.ts';
 import { createDocument, documentPixelSize, type VectarDocument } from '../core/model/document.ts';
 import { History, type Command } from '../core/model/history.ts';
 import {
   cloneNode, createLayerNode, isContainer,
-  type ContainerNode, type LayerNode, type NodeId, type SceneNode,
+  type ContainerNode, type LayerNode, type NodeId, type PathNode, type SceneNode,
 } from '../core/model/node.ts';
-import * as ops from '../core/model/ops.ts';
+import * as commands from '../core/model/commands.ts';
 import * as query from '../core/model/query.ts';
-import { defaultFill, defaultStroke, noStroke, type Fill, type Stroke } from '../core/model/style.ts';
-import { BLACK, type RGBA } from '../core/model/color.ts';
+import { defaultFill, noStroke, type Fill, type Stroke } from '../core/model/style.ts';
+import { BLACK } from '../core/model/color.ts';
 import { DEFAULT_BRUSH, type BrushOptions } from '../core/brush/stroke.ts';
 import { Viewport } from './viewport.ts';
 
 export type ToolId =
+  // `node` is the anchor-editing tool; the UI calls anchors "nodes".
   | 'select' | 'node' | 'pen' | 'pencil' | 'brush'
   | 'rect' | 'ellipse' | 'polygon' | 'star' | 'line'
   | 'text' | 'eyedropper' | 'zoom' | 'pan';
@@ -26,8 +27,14 @@ export type EditorEvent =
   | 'style'      // the default fill/stroke for new objects
   | 'status';    // transient status message
 
-/** A node reference plus the anchors selected inside it, for the node tool. */
-export type NodeSelection = {
+/**
+ * The anchors selected inside one path, for the anchor-editing tool.
+ *
+ * "Node" is the term the UI uses for an anchor, following other vector
+ * editors, but in this codebase a node is a `SceneNode`. Everything below the
+ * UI therefore says anchor.
+ */
+export type AnchorSelection = {
   nodeId: NodeId;
   /** `subpathIndex:anchorIndex` keys. */
   anchors: Set<string>;
@@ -58,7 +65,7 @@ export class Editor {
   viewport = new Viewport();
 
   selection = new Set<NodeId>();
-  nodeSelection: NodeSelection | null = null;
+  anchorSelection: AnchorSelection | null = null;
   activeLayerId: NodeId;
 
   tool: ToolId = 'select';
@@ -136,7 +143,7 @@ export class Editor {
     this.filePath = filePath;
     this.activeLayerId = doc.layers[0]?.id ?? '';
     this.selection.clear();
-    this.nodeSelection = null;
+    this.anchorSelection = null;
     this.history.clear();
     this.savedCommand = null;
     this.dirty = false;
@@ -190,7 +197,7 @@ export class Editor {
 
   setSelection(ids: Iterable<NodeId>): void {
     this.selection = new Set(ids);
-    if (this.nodeSelection && !this.selection.has(this.nodeSelection.nodeId)) this.nodeSelection = null;
+    if (this.anchorSelection && !this.selection.has(this.anchorSelection.nodeId)) this.anchorSelection = null;
     this.emit('selection');
   }
 
@@ -206,9 +213,9 @@ export class Editor {
   }
 
   clearSelection(): void {
-    if (this.selection.size === 0 && !this.nodeSelection) return;
+    if (this.selection.size === 0 && !this.anchorSelection) return;
     this.selection.clear();
-    this.nodeSelection = null;
+    this.anchorSelection = null;
     this.emit('selection');
   }
 
@@ -228,8 +235,8 @@ export class Editor {
     for (const id of [...this.selection]) {
       if (!query.findNode(this.document, id)) this.selection.delete(id);
     }
-    if (this.nodeSelection && !query.findNode(this.document, this.nodeSelection.nodeId)) {
-      this.nodeSelection = null;
+    if (this.anchorSelection && !query.findNode(this.document, this.anchorSelection.nodeId)) {
+      this.anchorSelection = null;
     }
   }
 
@@ -242,7 +249,7 @@ export class Editor {
   }
 
   /** The single selected path node, when exactly one path is selected. */
-  singleSelectedPath(): SceneNode | null {
+  singleSelectedPath(): PathNode | null {
     if (this.selection.size !== 1) return null;
     const node = this.selectedNodes()[0];
     return node && node.type === 'path' ? node : null;
@@ -281,7 +288,7 @@ export class Editor {
     if (nodes.length === 0) return;
     const parent = this.insertionParent();
     this.transaction(label, () => {
-      this.run(ops.addNodes(this.document, parent, nodes));
+      this.run(commands.addNodes(this.document, parent, nodes));
     });
     this.setSelection(nodes.map((n) => n.id));
   }
@@ -300,7 +307,7 @@ export class Editor {
     if (nodes.length === 0) return;
     this.copy();
     this.transaction('Cut', () => {
-      this.run(ops.removeNodes(this.document, nodes.map((n) => n.id)));
+      this.run(commands.removeNodes(this.document, nodes.map((n) => n.id)));
     });
     this.clearSelection();
   }
@@ -312,7 +319,7 @@ export class Editor {
   }
 
   duplicate(): void {
-    const copies = ops.duplicateNodes(this.document, [...this.selection]);
+    const copies = commands.duplicateNodes(this.document, [...this.selection]);
     if (copies.length === 0) return;
     // Offset the copies slightly so they are visibly distinct.
     const offset: Matrix = { a: 1, b: 0, c: 0, d: 1, e: 10, f: 10 };
@@ -326,7 +333,7 @@ export class Editor {
     if (this.selection.size === 0) return;
     const ids = [...this.selection];
     this.transaction('Delete', () => {
-      this.run(ops.removeNodes(this.document, ids));
+      this.run(commands.removeNodes(this.document, ids));
     });
     this.clearSelection();
   }
@@ -368,7 +375,7 @@ export class Editor {
   setTool(tool: ToolId): void {
     if (this.tool === tool) return;
     this.tool = tool;
-    if (tool !== 'node') this.nodeSelection = null;
+    if (tool !== 'node') this.anchorSelection = null;
     this.emit('tool', 'selection');
   }
 
@@ -389,14 +396,5 @@ export class Editor {
       x: Math.round(point.x / this.gridSize) * this.gridSize,
       y: Math.round(point.y / this.gridSize) * this.gridSize,
     };
-  }
-
-  /** Default stroke used when a tool needs a visible outline. */
-  strokeOrDefault(color: RGBA = BLACK): Stroke {
-    return this.stroke.paint.type === 'none' ? defaultStroke(color, 1) : this.stroke;
-  }
-
-  identityMatrix(): Matrix {
-    return identity();
   }
 }

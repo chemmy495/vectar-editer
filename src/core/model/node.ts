@@ -12,11 +12,6 @@ export function newId(prefix = 'n'): NodeId {
   return `${prefix}${counter.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Resets the id counter. Only used to make test output deterministic. */
-export function resetIdCounter(): void {
-  counter = 0;
-}
-
 type NodeBase = {
   id: NodeId;
   name: string;
@@ -80,10 +75,6 @@ export type ContainerNode = GroupNode | LayerNode;
 
 export const isContainer = (node: SceneNode): node is ContainerNode =>
   node.type === 'group' || node.type === 'layer';
-
-/** True for nodes that carry fill and stroke styling. */
-export const isShape = (node: SceneNode): node is PathNode | TextNode =>
-  node.type === 'path' || node.type === 'text';
 
 function baseNode(name: string): NodeBase {
   return {

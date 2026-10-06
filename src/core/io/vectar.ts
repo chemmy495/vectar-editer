@@ -12,8 +12,6 @@ import { noFill, noStroke, type BlendMode, type Fill, type GradientStop, type Pa
  * with anything unrecognised replaced by a sane default.
  */
 
-export const FILE_EXTENSION = 'vectar';
-
 export function serializeDocument(doc: VectarDocument, pretty = false): string {
   return JSON.stringify(doc, null, pretty ? 2 : 0);
 }

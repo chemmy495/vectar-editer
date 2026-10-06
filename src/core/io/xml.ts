@@ -184,10 +184,6 @@ export function parseXml(source: string): XmlNode | null {
   return root ?? stack[0] ?? null;
 }
 
-/** Direct children with the given tag name. */
-export const childrenNamed = (node: XmlNode, name: string): XmlNode[] =>
-  node.children.filter((c) => c.name === name);
-
 /** Depth-first search for every descendant with the given tag name. */
 export function findAll(node: XmlNode, name: string): XmlNode[] {
   const result: XmlNode[] = [];

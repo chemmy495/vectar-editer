@@ -6,9 +6,9 @@
 利用者向けの説明（機能、ビルド方法、キーボード操作、既知の制限）は
 [README.md](../README.md) にあります。
 
-- 対象コミット: `c917ff8` 時点
-- 規模: TypeScript/CSS/HTML 合計 約 12,800 行（`src` 約 10,900 行、`test` 約 1,900 行）
-- テスト: 134 件（`node --test`）
+- 対象: ブランチ `claude/gallant-faraday-yfrqbw` の最新コミット
+- 規模: TypeScript/CSS/HTML 合計 約 12,700 行（`src` 約 11,100 行、`test` 約 1,600 行）
+- テスト: 136 件（`node --test`）
 
 ---
 
@@ -52,6 +52,7 @@ vectar-editer/
 │   │   └── io/               SVG / PDF / ネイティブ形式の入出力
 │   │       ├── svg/
 │   │       ├── pdf/
+│   │       ├── bmp/
 │   │       ├── xml.ts
 │   │       └── vectar.ts
 │   ├── main/                 Electron メインプロセス
@@ -71,21 +72,21 @@ vectar-editer/
 
 | ファイル | 行 | 責務 |
 | --- | --- | --- |
-| `geometry/vec.ts` | 48 | 2次元ベクトル演算 |
+| `geometry/vec.ts` | 45 | 2次元ベクトル演算 |
 | `geometry/matrix.ts` | 155 | アフィン変換、SVG `transform` の解析 |
 | `geometry/rect.ts` | 88 | 軸平行矩形 |
-| `geometry/bezier.ts` | 241 | 3次ベジェ（評価・分割・厳密な境界・弧長・最近点） |
-| `path/path.ts` | 274 | アンカー/ハンドルのパスモデル |
+| `geometry/bezier.ts` | 212 | 3次ベジェ（評価・分割・厳密な境界・弧長・最近点） |
+| `path/path.ts` | 229 | アンカー/ハンドルのパスモデル |
 | `path/parse.ts` | 344 | SVG `d` 属性の字句解析と構文解析、円弧→3次変換 |
 | `path/serialize.ts` | 46 | SVG `d` 属性の生成 |
 | `path/shapes.ts` | 114 | 矩形・楕円・多角形・星・線の生成 |
 | `path/build.ts` | 48 | 3次曲線列 → サブパス |
-| `model/color.ts` | 139 | RGBA、CSS 色の解析と整形 |
+| `model/color.ts` | 125 | RGBA、CSS 色の解析と整形 |
 | `model/style.ts` | 113 | Paint / Fill / Stroke / BlendMode |
-| `model/node.ts` | 189 | シーンノードの型と生成・複製 |
-| `model/document.ts` | 55 | 文書と単位系 |
-| `model/query.ts` | 282 | 走査、ワールド変換、境界、ヒットテスト |
-| `model/ops.ts` | 491 | 編集操作（すべて `Command` を返す） |
+| `model/node.ts` | 180 | シーンノードの型と生成・複製 |
+| `model/document.ts` | 48 | 文書と単位系 |
+| `model/query.ts` | 261 | 走査、ワールド変換、境界、ヒットテスト |
+| `model/commands.ts` | 495 | 編集操作（すべて `Command` を返す） |
 | `model/history.ts` | 149 | Undo/Redo スタックとトランザクション |
 | `trace/quantize.ts` | 262 | 色量子化、前処理ブラー |
 | `trace/contour.ts` | 165 | 連結成分ラベリング、輪郭追跡 |
@@ -94,11 +95,12 @@ vectar-editer/
 | `trace/trace.ts` | 213 | ベクター化パイプラインの統合とプリセット |
 | `brush/stroke.ts` | 211 | 筆圧ストローク → 輪郭パス |
 | `render/render.ts` | 227 | シーン描画 |
-| `io/xml.ts` | 214 | 依存なしの XML 読み書き |
+| `io/xml.ts` | 210 | 依存なしの XML 読み書き |
 | `io/svg/import.ts` | 542 | SVG 読み込み |
 | `io/svg/export.ts` | 276 | SVG 書き出し |
 | `io/pdf/export.ts` | 260 | PDF 1.4 書き出し |
-| `io/vectar.ts` | 277 | ネイティブ形式（JSON）の読み書き |
+| `io/vectar.ts` | 275 | ネイティブ形式（JSON）の読み書き |
+| `io/bmp/export.ts` | 47 | 24bit BMP 書き出し（Canvas が出力できない唯一の形式） |
 
 </details>
 
@@ -112,25 +114,25 @@ vectar-editer/
 | `main/preload.ts` | 53 | `window.vectar` ブリッジ |
 | `main/ipc.ts` | 64 | チャネル名と payload 型（両プロセスが共有） |
 | `renderer/main.ts` | 265 | 起動、コマンド振り分け、ショートカット |
-| `renderer/editor.ts` | 402 | 中央の状態（文書・選択・履歴・ツール設定） |
+| `renderer/editor.ts` | 400 | 中央の状態（文書・選択・履歴・ツール設定） |
 | `renderer/canvas.ts` | 280 | 描画面。描画ループとポインタ入力の分配 |
 | `renderer/viewport.ts` | 87 | パン・ズームの座標変換 |
 | `renderer/overlay.ts` | 247 | 選択枠・ハンドル・アンカー・グリッドの描画 |
 | `renderer/tool.ts` | 19 | `Tool` インタフェース |
 | `renderer/tools/select.ts` | 269 | 選択・移動・拡大縮小・回転・矩形選択 |
-| `renderer/tools/node.ts` | 344 | アンカーとハンドルの直接編集 |
+| `renderer/tools/anchor.ts` | 347 | アンカーとハンドルの直接編集 |
 | `renderer/tools/pen.ts` | 149 | ベジェペン |
 | `renderer/tools/freehand.ts` | 144 | 鉛筆とブラシ |
 | `renderer/tools/shape.ts` | 146 | 図形ツール（5 種） |
 | `renderer/tools/text.ts` | 135 | テキストとその場編集 |
 | `renderer/tools/utility.ts` | 116 | ズーム・スポイト・パン |
-| `renderer/files.ts` | 555 | 開く・保存・インポート・エクスポート、各ダイアログ |
-| `renderer/commands.ts` | 150 | 高水準の編集コマンド |
+| `renderer/files.ts` | 518 | 開く・保存・インポート・エクスポート、各ダイアログ |
+| `renderer/editing.ts` | 154 | 高水準の編集操作（即時実行） |
 | `renderer/panels/properties.ts` | 524 | プロパティ・インスペクタ |
 | `renderer/panels/layers.ts` | 202 | レイヤ/オブジェクトのツリー |
 | `renderer/panels/toolbar.ts` | 48 | ツールストリップ |
 | `renderer/panels/statusbar.ts` | 33 | ステータスバー |
-| `renderer/dom.ts` | 147 | DOM 生成ヘルパと入力部品 |
+| `renderer/dom.ts` | 108 | DOM 生成ヘルパと入力部品 |
 | `renderer/dialog.ts` | 95 | モーダル・進捗・メッセージ |
 | `renderer/index.html` | 26 | シェル（CSP つき） |
 | `renderer/styles.css` | 534 | スタイル |
@@ -191,6 +193,22 @@ core/io        →  geometry, path, model
 
 4. **ツールとパネルは 1 機能 1 ファイル。** 相互に import しません。
    連携は必ず `Editor` を経由します。
+
+### 紛らわしい語の使い分け
+
+同じ語が別の意味で使われないよう、次を決めています。
+
+| 語 | 意味 | 置き場所 |
+| --- | --- | --- |
+| `Command` | 取り消し単位（`redo` / `undo` を持つ） | `model/history.ts` で定義、`model/commands.ts` が生成 |
+| `MenuCommand` | メニュー項目を表す文字列 | `main/ipc.ts` |
+| 編集操作（即時実行） | メニューやキーから呼ぶ高水準の処理 | `renderer/editing.ts` |
+| `node` | シーングラフのオブジェクト（`SceneNode`） | `model/` 全域 |
+| `anchor` | パス上の制御点 | `path/`、`tools/anchor.ts` |
+
+`ToolId` の `'node'` だけは例外で、UI がアンカーを「ノード」と呼ぶ慣習
+（Inkscape 等）に合わせた**表示上の名前**です。それ以外の場所でアンカーを
+`node` と呼ぶことはありません。
 
 ---
 
@@ -265,7 +283,7 @@ export type Command = { label: string; redo: () => void; undo: () => void };
 **自分を巻き戻すのに必要な最小限のデータだけ**を保持します
 （例: `transformNodes` は変換前後の行列のみ）。
 
-`model/ops.ts` の関数はすべて `Command` を返し、**自分では適用しません**。
+`model/commands.ts` の関数はすべて `Command` を返し、**自分では適用しません**。
 適用するかどうかは呼び出し側（`Editor.run`）が決めます。
 複数の操作を 1 ステップにまとめたいときは `history.transaction()` で囲みます
 （本文が例外を投げた場合は収集済みのコマンドを巻き戻します）。
@@ -422,7 +440,7 @@ Editor
 ├── history       History
 ├── viewport      Viewport
 ├── selection     Set<NodeId>
-├── nodeSelection { nodeId, anchors }   ノードツール用
+├── anchorSelection { nodeId, anchors } アンカー編集ツール用
 ├── activeLayerId
 ├── tool          ToolId
 ├── fill / stroke / brush / shapeDefaults   新規オブジェクトの既定値
@@ -579,7 +597,7 @@ SVG         io/svg/export.exportSvg    → saveFile（utf8）
 PDF         io/pdf/export.exportPdf    → base64 → saveFile
 PNG/JPEG/   オフスクリーン canvas に renderForExport
 WebP        → canvas.toBlob → base64 → saveFile
-BMP         PNG 経由で画素を取り出し files.encodeBmp で 24bit BMP を自前生成
+BMP         PNG 経由で画素を取り出し io/bmp/export.encodeBmp で 24bit BMP を生成
             （Canvas API は BMP を出力できない）
 ```
 
@@ -619,7 +637,7 @@ npm test           node --test test/*.test.ts
 | `model.test.ts` | 27 | 走査・ヒットテスト・履歴・編集操作 |
 | `trace.test.ts` | 29 | 量子化・輪郭・簡略化・フィッティング・パイプライン |
 | `brush.test.ts` | 11 | ストローク輪郭、キャップ、筆圧、ブラー |
-| `io.test.ts` | 34 | XML、SVG 入出力、PDF 構造、ネイティブ形式 |
+| `io.test.ts` | 36 | XML、SVG 入出力、PDF 構造、ネイティブ形式 |
 
 テストはビルドを介さず `src` の `.ts` を直接読みます。
 
@@ -638,7 +656,7 @@ dirty フラグ、スタイルドラッグの確定、終了ハンドシェイ�
   ツールバーに載せるには `panels/toolbar.ts` の `TOOL_BUTTONS` に 1 行足す。
   進行中の操作は `deactivate()` で必ず後片付けする。
 
-- **新しい編集操作を追加する**: `model/ops.ts` に `Command` を返す関数として
+- **新しい編集操作を追加する**: `model/commands.ts` に `Command` を返す関数として
   書く。自分で `redo()` を呼ばない。`undo` は完全に元へ戻すこと
   （`model.test.ts` は往復を検証している）。
 

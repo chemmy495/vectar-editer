@@ -1,9 +1,13 @@
+/**
+ * High-level editing actions invoked from the menu and keyboard. Each one
+ * applies immediately, building on the commands in `core/model/commands.ts`.
+ */
 import { clonePath, reversePath } from '../core/path/path.ts';
 import { simplifyPolyline } from '../core/trace/simplify.ts';
 import { fitCurve } from '../core/trace/fit.ts';
 import { subPathFromCubics } from '../core/path/build.ts';
 import { rectanglePath } from '../core/path/shapes.ts';
-import * as ops from '../core/model/ops.ts';
+import * as commands from '../core/model/commands.ts';
 import * as query from '../core/model/query.ts';
 import { createPathNode, type PathNode, type SceneNode } from '../core/model/node.ts';
 import { cloneFill, cloneStroke } from '../core/model/style.ts';
@@ -19,7 +23,7 @@ export function reverseSelectedPaths(editor: Editor): void {
   }
   editor.transaction('Reverse path', () => {
     for (const node of paths) {
-      editor.run(ops.setPath(editor.document, node.id, reversePath(node.path), 'Reverse path'));
+      editor.run(commands.setPath(editor.document, node.id, reversePath(node.path), 'Reverse path'));
     }
   });
   editor.setStatus(`Reversed ${paths.length} path${paths.length === 1 ? '' : 's'}`);
@@ -54,7 +58,7 @@ export function simplifySelectedPaths(editor: Editor, tolerance = 1.5): void {
         })
         .filter((subpath) => subpath.anchors.length >= 2);
       for (const subpath of rebuilt.subpaths) after += subpath.anchors.length;
-      editor.run(ops.setPath(editor.document, node.id, rebuilt, 'Simplify path'));
+      editor.run(commands.setPath(editor.document, node.id, rebuilt, 'Simplify path'));
     }
   });
   editor.setStatus(`Simplified ${before} anchors down to ${after}`);
@@ -90,8 +94,8 @@ export function convertSelectionToPaths(editor: Editor): void {
       replacement.transform = { ...node.transform };
       replacement.fill = cloneFill(editor.fill);
       replacement.stroke = cloneStroke(editor.stroke);
-      editor.run(ops.removeNodes(editor.document, [node.id]));
-      editor.run(ops.addNodes(editor.document, location.parent, [replacement as SceneNode], location.index));
+      editor.run(commands.removeNodes(editor.document, [node.id]));
+      editor.run(commands.addNodes(editor.document, location.parent, [replacement as SceneNode], location.index));
     }
   });
 }
@@ -100,7 +104,7 @@ export function convertSelectionToPaths(editor: Editor): void {
 export function setSelectionFlag(editor: Editor, key: 'locked' | 'visible', value: boolean): void {
   if (editor.selection.size === 0) return;
   editor.transaction(key === 'locked' ? 'Lock' : 'Hide', () => {
-    editor.run(ops.patchNodes(editor.document, [...editor.selection], { [key]: value } as Partial<SceneNode>, 'Change'));
+    editor.run(commands.patchNodes(editor.document, [...editor.selection], { [key]: value } as Partial<SceneNode>, 'Change'));
   });
   if (key === 'locked' && value) editor.clearSelection();
   if (key === 'visible' && !value) editor.clearSelection();
@@ -114,7 +118,7 @@ export function clearFlagEverywhere(editor: Editor, key: 'locked' | 'visible', v
   });
   if (ids.length === 0) return;
   editor.transaction(key === 'locked' ? 'Unlock all' : 'Show all', () => {
-    editor.run(ops.patchNodes(editor.document, ids, { [key]: value } as Partial<SceneNode>, 'Change'));
+    editor.run(commands.patchNodes(editor.document, ids, { [key]: value } as Partial<SceneNode>, 'Change'));
   });
 }
 
@@ -123,7 +127,7 @@ export function groupSelection(editor: Editor): void {
     editor.setStatus('Select at least two objects to group');
     return;
   }
-  const result = ops.groupNodes(editor.document, [...editor.selection]);
+  const result = commands.groupNodes(editor.document, [...editor.selection]);
   if (!result) return;
   editor.transaction('Group', () => editor.run(result.command));
   editor.setSelection([result.group.id]);
@@ -136,15 +140,15 @@ export function ungroupSelection(editor: Editor): void {
     return;
   }
   const childIds = groups.flatMap((group) => (group.type === 'group' ? group.children.map((c) => c.id) : []));
-  const command = ops.ungroupNodes(editor.document, groups.map((g) => g.id));
+  const command = commands.ungroupNodes(editor.document, groups.map((g) => g.id));
   if (!command) return;
   editor.transaction('Ungroup', () => editor.run(command));
   editor.setSelection(childIds);
 }
 
-export function reorderSelection(editor: Editor, action: ops.ZOrderAction): void {
+export function reorderSelection(editor: Editor, action: commands.ZOrderAction): void {
   if (editor.selection.size === 0) return;
   editor.transaction('Reorder', () => {
-    editor.run(ops.reorderNodes(editor.document, [...editor.selection], action));
+    editor.run(commands.reorderNodes(editor.document, [...editor.selection], action));
   });
 }

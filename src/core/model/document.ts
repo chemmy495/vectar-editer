@@ -1,5 +1,5 @@
 import { WHITE, type RGBA } from './color.ts';
-import { createLayerNode, type LayerNode, type SceneNode } from './node.ts';
+import { createLayerNode, type LayerNode } from './node.ts';
 
 /** Physical unit the canvas size is expressed in. Pixels are the default. */
 export type Unit = 'px' | 'mm' | 'in' | 'pt';
@@ -37,17 +37,10 @@ export function createDocument(
   };
 }
 
-/** All top-level layers plus their descendants, in draw order. */
-export function rootNodes(doc: VectarDocument): SceneNode[] {
-  return doc.layers;
-}
-
 const PX_PER_UNIT: Record<Unit, number> = { px: 1, pt: 96 / 72, mm: 96 / 25.4, in: 96 };
 
 /** Converts a length in `doc.unit` into CSS pixels. */
 export const toPixels = (value: number, unit: Unit): number => value * PX_PER_UNIT[unit];
-
-export const fromPixels = (value: number, unit: Unit): number => value / PX_PER_UNIT[unit];
 
 export const documentPixelSize = (doc: VectarDocument): { width: number; height: number } => ({
   width: toPixels(doc.width, doc.unit),

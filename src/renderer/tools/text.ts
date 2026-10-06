@@ -1,6 +1,6 @@
 import { createTextNode, type TextNode } from '../../core/model/node.ts';
 import { cloneFill, cloneStroke } from '../../core/model/style.ts';
-import * as ops from '../../core/model/ops.ts';
+import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import type { Editor } from '../editor.ts';
 import type { CanvasView } from '../canvas.ts';
@@ -24,7 +24,7 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
       node.text = original;
       if (isNew) {
         // A cancelled new object should leave nothing behind.
-        const command = ops.removeNodes(editor.document, [node.id]);
+        const command = commands.removeNodes(editor.document, [node.id]);
         command.redo();
         editor.clearSelection();
       }
@@ -38,7 +38,7 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
       editor.addNodes([node], 'Add text');
     } else if (value !== original) {
       editor.transaction('Edit text', () => {
-        editor.run(ops.patchNode<TextNode>(editor.document, node.id, { text: value }, 'Edit text'));
+        editor.run(commands.patchNode<TextNode>(editor.document, node.id, { text: value }, 'Edit text'));
       });
     }
     editor.emit('document');

@@ -1,5 +1,5 @@
 import { button, clear, h } from '../dom.ts';
-import * as ops from '../../core/model/ops.ts';
+import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import { isContainer, type NodeId, type SceneNode } from '../../core/model/node.ts';
 import type { Editor } from '../editor.ts';
@@ -18,7 +18,7 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
 
   const toggleFlag = (node: SceneNode, key: 'visible' | 'locked') => {
     editor.transaction(key === 'visible' ? 'Toggle visibility' : 'Toggle lock', () => {
-      editor.run(ops.patchNode(editor.document, node.id, { [key]: !node[key] } as Partial<SceneNode>, 'Toggle'));
+      editor.run(commands.patchNode(editor.document, node.id, { [key]: !node[key] } as Partial<SceneNode>, 'Toggle'));
     });
   };
 
@@ -30,7 +30,7 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
     const commit = (save: boolean) => {
       if (save && input.value.trim() !== '' && input.value !== node.name) {
         editor.transaction('Rename', () => {
-          editor.run(ops.patchNode(editor.document, node.id, { name: input.value.trim() }, 'Rename'));
+          editor.run(commands.patchNode(editor.document, node.id, { name: input.value.trim() }, 'Rename'));
         });
       } else {
         render();
@@ -148,14 +148,14 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
       if (target.type !== 'layer') return;
       const toIndex = editor.document.layers.findIndex((layer) => layer.id === target.id);
       editor.transaction('Reorder layers', () => {
-        editor.run(ops.moveLayer(editor.document, draggedId, toIndex));
+        editor.run(commands.moveLayer(editor.document, draggedId, toIndex));
       });
       return;
     }
 
     if (isContainer(target)) {
       editor.transaction('Move to layer', () => {
-        editor.run(ops.reparentNodes(editor.document, [draggedId], target));
+        editor.run(commands.reparentNodes(editor.document, [draggedId], target));
       });
       return;
     }
@@ -163,7 +163,7 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
     const targetLocation = query.findNode(editor.document, target.id);
     if (!targetLocation?.parent) return;
     editor.transaction('Reorder', () => {
-      editor.run(ops.reparentNodes(editor.document, [draggedId], targetLocation.parent!, targetLocation.index + 1));
+      editor.run(commands.reparentNodes(editor.document, [draggedId], targetLocation.parent!, targetLocation.index + 1));
     });
   };
 
@@ -173,12 +173,12 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
     const header = h('div', { class: 'panel-header' }, [
       h('span', { text: 'Layers' }),
       button('+', () => {
-        const added = ops.addLayer(editor.document);
+        const added = commands.addLayer(editor.document);
         editor.transaction('Add layer', () => editor.run(added.command));
         editor.setActiveLayer(added.layer.id);
       }, { class: 'icon-button', title: 'Add layer' }),
       button('−', () => {
-        const command = ops.removeLayer(editor.document, editor.activeLayerId);
+        const command = commands.removeLayer(editor.document, editor.activeLayerId);
         if (!command) {
           editor.setStatus('A document needs at least one layer');
           return;

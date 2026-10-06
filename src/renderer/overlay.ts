@@ -145,7 +145,7 @@ export function drawNodeEditingOverlay(ctx: CanvasRenderingContext2D, editor: Ed
       y: world.b * point.x + world.d * point.y + world.f,
     });
 
-  const selected = editor.nodeSelection?.nodeId === node.id ? editor.nodeSelection.anchors : new Set<string>();
+  const selected = editor.anchorSelection?.nodeId === node.id ? editor.anchorSelection.anchors : new Set<string>();
 
   // The path outline, so anchors read against the shape.
   ctx.save();
