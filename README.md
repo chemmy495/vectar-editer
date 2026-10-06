@@ -1,5 +1,7 @@
 # Vectar Editor
 
+*[日本語版 README](README.ja.md)*
+
 A vector graphics editor for Windows. It imports an image, reproduces it as
 editable vector data, lets you draw freely on top with a brush, shapes and
 text, and exports to a range of vector and raster formats.
