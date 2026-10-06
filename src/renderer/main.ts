@@ -1,4 +1,5 @@
 import { byId, h } from './dom.ts';
+import { Subscriptions, disposeAll, type Component } from './lifecycle.ts';
 import { showDialog, showMessage } from './dialog.ts';
 import { Editor, type ToolId } from './editor.ts';
 import { CanvasView } from './canvas.ts';
@@ -42,6 +43,8 @@ const SHORTCUTS: Array<[string, string]> = [
 ];
 
 function main(): void {
+  /** Everything the shell itself subscribes to, released on teardown. */
+  const subscriptions = new Subscriptions();
   const editor = new Editor();
   const canvas = new CanvasView(editor, byId('viewport'));
   const files = createFileOperations(editor, canvas);
@@ -60,19 +63,28 @@ function main(): void {
   canvas.registerTool(createZoomTool(editor, canvas));
   canvas.registerTool(createPanTool(editor, canvas));
 
-  editor.on('tool', () => canvas.setActiveTool(editor.tool));
+  editor.events.bind(subscriptions, ['tool'], () => canvas.setActiveTool(editor.tool));
   canvas.setActiveTool(editor.tool);
 
   // --- panels ------------------------------------------------------------
-  createToolbar(editor, byId('toolbar'));
-  createPropertiesPanel(editor, byId('properties'));
-  createLayersPanel(editor, byId('layers'));
-  createStatusBar(editor, byId('statusbar'));
+  const components: Component[] = [
+    canvas,
+    createToolbar(editor, byId('toolbar')),
+    createPropertiesPanel(editor, byId('properties')),
+    createLayersPanel(editor, byId('layers')),
+    createStatusBar(editor, byId('statusbar')),
+  ];
 
   // --- window title ------------------------------------------------------
   const updateTitle = () => window.vectar.setTitle(editor.documentName(), editor.dirty);
-  editor.on('document', updateTitle);
+  editor.events.bind(subscriptions, ['document'], updateTitle);
   updateTitle();
+
+  // Release everything on teardown, so a reload leaves nothing behind.
+  subscriptions.addEventListener(window, 'pagehide', () => {
+    subscriptions.dispose();
+    disposeAll(components);
+  });
 
   const showShortcuts = () =>
     showDialog<void>('Keyboard Shortcuts', (close) => {

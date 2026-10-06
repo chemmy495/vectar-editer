@@ -8,6 +8,7 @@ import {
 import * as commands from '../../core/model/commands.ts';
 import type { PathNode, TextNode } from '../../core/model/node.ts';
 import type { VectarDocument } from '../../core/model/document.ts';
+import { Subscriptions, type Component } from '../lifecycle.ts';
 import type { Editor } from '../editor.ts';
 
 /**
@@ -65,7 +66,7 @@ function colorControl(
  * The right-hand inspector. It shows the style and geometry of the selection,
  * or the defaults that new objects will take when nothing is selected.
  */
-export function createPropertiesPanel(editor: Editor, container: HTMLElement): void {
+export function createPropertiesPanel(editor: Editor, container: HTMLElement): Component {
   /**
    * A style drag in progress. `before` holds the values from before the drag
    * started, so every live update is derived from those rather than compounding
@@ -494,10 +495,11 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     }
   };
 
+  const subscriptions = new Subscriptions();
   // A pointer released anywhere ends the drag, even if the control's own
   // `change` event never arrives.
-  window.addEventListener('pointerup', endInteraction);
-  window.addEventListener('pointercancel', endInteraction);
+  subscriptions.addEventListener(window, 'pointerup', endInteraction);
+  subscriptions.addEventListener(window, 'pointercancel', endInteraction);
 
   const render = () => {
     if (interacting) {
@@ -519,6 +521,14 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): v
     for (const section of sections) if (section) container.append(section);
   };
 
-  for (const event of ['document', 'selection', 'tool', 'style', 'view'] as const) editor.on(event, render);
+  editor.events.bind(subscriptions, ['document', 'selection', 'tool', 'style', 'view'], render);
   render();
+
+  return {
+    dispose: () => {
+      // Any drag still in flight is recorded before the panel goes away.
+      endInteraction();
+      subscriptions.dispose();
+    },
+  };
 }

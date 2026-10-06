@@ -3,6 +3,7 @@ import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import { isContainer, type NodeId, type SceneNode } from '../../core/model/node.ts';
 import type { Editor } from '../editor.ts';
+import { Subscriptions, type Component } from '../lifecycle.ts';
 
 const TYPE_LABEL: Record<SceneNode['type'], string> = {
   layer: 'Layer', group: 'Group', path: 'Path', text: 'Text', image: 'Image',
@@ -12,7 +13,7 @@ const TYPE_LABEL: Record<SceneNode['type'], string> = {
  * The layer and object tree. Rows can be selected, renamed, reordered and
  * toggled for visibility and locking.
  */
-export function createLayersPanel(editor: Editor, container: HTMLElement): void {
+export function createLayersPanel(editor: Editor, container: HTMLElement): Component {
   /** Ids of containers the user has collapsed. */
   const collapsed = new Set<NodeId>();
 
@@ -197,6 +198,8 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): void 
     container.append(header, list);
   };
 
-  for (const event of ['document', 'selection'] as const) editor.on(event, render);
+  const subscriptions = new Subscriptions();
+  editor.events.bind(subscriptions, ['document', 'selection'], render);
   render();
+  return { dispose: () => subscriptions.dispose() };
 }

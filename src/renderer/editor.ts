@@ -12,20 +12,15 @@ import { defaultFill, noStroke, type Fill, type Stroke } from '../core/model/sty
 import { BLACK } from '../core/model/color.ts';
 import { DEFAULT_BRUSH, type BrushOptions } from '../core/brush/stroke.ts';
 import { Viewport } from './viewport.ts';
+import { EventBus, type EditorEvent } from './events.ts';
+
+export type { EditorEvent };
 
 export type ToolId =
   // `node` is the anchor-editing tool; the UI calls anchors "nodes".
   | 'select' | 'node' | 'pen' | 'pencil' | 'brush'
   | 'rect' | 'ellipse' | 'polygon' | 'star' | 'line'
   | 'text' | 'eyedropper' | 'zoom' | 'pan';
-
-export type EditorEvent =
-  | 'document'   // geometry or structure changed
-  | 'selection'
-  | 'tool'
-  | 'view'       // pan/zoom
-  | 'style'      // the default fill/stroke for new objects
-  | 'status';    // transient status message
 
 /**
  * The anchors selected inside one path, for the anchor-editing tool.
@@ -88,7 +83,8 @@ export class Editor {
   /** Objects on the clipboard, already detached from the document. */
   clipboard: SceneNode[] = [];
 
-  private listeners = new Map<EditorEvent, Set<() => void>>();
+  /** Publishes state changes to the UI. */
+  readonly events = new EventBus();
   /**
    * The command that was on top of the undo stack when the document was last
    * saved. Comparing identity rather than stack depth is what makes undo, redo
@@ -118,16 +114,11 @@ export class Editor {
   }
 
   on(event: EditorEvent, listener: () => void): () => void {
-    const set = this.listeners.get(event) ?? new Set();
-    set.add(listener);
-    this.listeners.set(event, set);
-    return () => set.delete(listener);
+    return this.events.on(event, listener);
   }
 
   emit(...events: EditorEvent[]): void {
-    for (const event of events) {
-      for (const listener of this.listeners.get(event) ?? []) listener();
-    }
+    this.events.emit(...events);
   }
 
   setStatus(message: string): void {

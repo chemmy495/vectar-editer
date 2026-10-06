@@ -5,13 +5,14 @@ import * as query from '../core/model/query.ts';
 import type { Editor, ToolId } from './editor.ts';
 import { drawCanvasFrame, drawGrid, drawNodeEditingOverlay, outlineNode } from './overlay.ts';
 import type { Tool } from './tool.ts';
+import { Subscriptions, type Component } from './lifecycle.ts';
 
 /**
  * The drawing surface. It owns the canvas element, keeps it sized to its
  * container at the device pixel ratio, renders the scene plus overlays, and
  * routes pointer input to the active tool.
  */
-export class CanvasView {
+export class CanvasView implements Component {
   readonly element: HTMLCanvasElement;
   private context: CanvasRenderingContext2D;
   private editor: Editor;
@@ -26,6 +27,8 @@ export class CanvasView {
   private spaceHeld = false;
   /** Images decoded for image nodes, keyed by their href. */
   private imageCache = new Map<string, HTMLImageElement>();
+  private subscriptions = new Subscriptions();
+  private resizeObserver: ResizeObserver;
 
   constructor(editor: Editor, container: HTMLElement) {
     this.editor = editor;
@@ -38,16 +41,28 @@ export class CanvasView {
     if (!context) throw new Error('This system does not provide a 2D canvas context.');
     this.context = context;
 
-    const observer = new ResizeObserver(() => this.resize());
-    observer.observe(container);
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
     this.resize();
 
     this.attachPointerHandlers();
     this.attachWheelHandler();
 
-    for (const event of ['document', 'selection', 'view', 'tool', 'style'] as const) {
-      editor.on(event, () => this.requestRender());
-    }
+    editor.events.bind(
+      this.subscriptions,
+      ['document', 'selection', 'view', 'tool', 'style'],
+      () => this.requestRender(),
+    );
+  }
+
+  /** Releases the observer, the listeners and the active tool. */
+  dispose(): void {
+    this.activeTool?.deactivate?.();
+    this.activeTool = null;
+    this.resizeObserver.disconnect();
+    this.subscriptions.dispose();
+    this.imageCache.clear();
+    this.element.remove();
   }
 
   registerTool(tool: Tool): void {

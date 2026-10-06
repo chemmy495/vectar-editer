@@ -1,5 +1,6 @@
 import { h, clear } from '../dom.ts';
 import type { Editor, ToolId } from '../editor.ts';
+import { Subscriptions, type Component } from '../lifecycle.ts';
 
 type ToolButton = { id: ToolId; label: string; icon: string; shortcut: string };
 
@@ -21,7 +22,7 @@ const TOOL_BUTTONS: ToolButton[] = [
 ];
 
 /** The vertical tool strip down the left edge. */
-export function createToolbar(editor: Editor, container: HTMLElement): void {
+export function createToolbar(editor: Editor, container: HTMLElement): Component {
   const render = () => {
     clear(container);
     for (const tool of TOOL_BUTTONS) {
@@ -43,6 +44,8 @@ export function createToolbar(editor: Editor, container: HTMLElement): void {
     }
   };
 
-  editor.on('tool', render);
+  const subscriptions = new Subscriptions();
+  editor.events.bind(subscriptions, ['tool'], render);
   render();
+  return { dispose: () => subscriptions.dispose() };
 }

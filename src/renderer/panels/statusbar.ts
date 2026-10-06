@@ -1,9 +1,10 @@
 import { clear, h } from '../dom.ts';
 import { documentStats } from '../../core/model/query.ts';
 import type { Editor } from '../editor.ts';
+import { Subscriptions, type Component } from '../lifecycle.ts';
 
 /** The bar along the bottom: zoom, counts, selection info and messages. */
-export function createStatusBar(editor: Editor, container: HTMLElement): void {
+export function createStatusBar(editor: Editor, container: HTMLElement): Component {
   const render = () => {
     clear(container);
     const stats = documentStats(editor.document);
@@ -28,6 +29,8 @@ export function createStatusBar(editor: Editor, container: HTMLElement): void {
     container.append(...items);
   };
 
-  for (const event of ['document', 'selection', 'view', 'status'] as const) editor.on(event, render);
+  const subscriptions = new Subscriptions();
+  editor.events.bind(subscriptions, ['document', 'selection', 'view', 'status'], render);
   render();
+  return { dispose: () => subscriptions.dispose() };
 }
