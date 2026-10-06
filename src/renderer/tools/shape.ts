@@ -5,9 +5,12 @@ import type { PathData } from '../../core/path/path.ts';
 import { createPathNode } from '../../core/model/node.ts';
 import { cloneFill, cloneStroke, defaultStroke, noFill } from '../../core/model/style.ts';
 import { BLACK } from '../../core/model/color.ts';
-import type { Editor, ToolId } from '../editor.ts';
+
 import type { CanvasView } from '../canvas.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
+import type { ToolId } from '../state/tool-settings.ts';
+import { addNodes } from '../editing.ts';
 
 export type ShapeKind = 'rect' | 'ellipse' | 'polygon' | 'star' | 'line';
 
@@ -16,7 +19,7 @@ const LABELS: Record<ShapeKind, string> = {
 };
 
 /** Drag-to-draw primitives. Shift constrains, Alt draws from the centre. */
-export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeKind): Tool {
+export function createShapeTool(editor: EditorContext, canvas: CanvasView, kind: ShapeKind): Tool {
   let origin: Vec | null = null;
   let current: Vec | null = null;
   let fromCenter = false;
@@ -56,13 +59,13 @@ export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeK
     if (box.width < 1e-6 || box.height < 1e-6) return null;
     switch (kind) {
       case 'rect':
-        return rectanglePath(box, editor.shapeDefaults.cornerRadius);
+        return rectanglePath(box, editor.tools.shape.cornerRadius);
       case 'ellipse':
         return ellipsePath(box);
       case 'polygon':
-        return polygonPath(box, editor.shapeDefaults.polygonSides);
+        return polygonPath(box, editor.tools.shape.polygonSides);
       case 'star':
-        return starPath(box, editor.shapeDefaults.starPoints, editor.shapeDefaults.starInnerRatio);
+        return starPath(box, editor.tools.shape.starPoints, editor.tools.shape.starInnerRatio);
     }
   };
 
@@ -77,7 +80,7 @@ export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeK
 
     onPointerDown(event, point) {
       if (event.button !== 0) return;
-      origin = editor.snap(point);
+      origin = editor.view.snap(point);
       current = origin;
       fromCenter = event.altKey;
       constrained = event.shiftKey;
@@ -86,7 +89,7 @@ export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeK
 
     onPointerMove(event, point) {
       if (!origin) return;
-      current = editor.snap(point);
+      current = editor.view.snap(point);
       fromCenter = event.altKey;
       constrained = event.shiftKey;
       canvas.requestRender();
@@ -102,12 +105,12 @@ export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeK
       const node = createPathNode(path, LABELS[kind]);
       if (kind === 'line') {
         node.fill = noFill();
-        node.stroke = editor.stroke.paint.type === 'none' ? defaultStroke(BLACK, 1) : cloneStroke(editor.stroke);
+        node.stroke = editor.tools.stroke.paint.type === 'none' ? defaultStroke(BLACK, 1) : cloneStroke(editor.tools.stroke);
       } else {
-        node.fill = cloneFill(editor.fill);
-        node.stroke = cloneStroke(editor.stroke);
+        node.fill = cloneFill(editor.tools.fill);
+        node.stroke = cloneStroke(editor.tools.stroke);
       }
-      editor.addNodes([node], `Draw ${LABELS[kind].toLowerCase()}`);
+      addNodes(editor, [node], `Draw ${LABELS[kind].toLowerCase()}`);
     },
 
     onKeyDown(event) {
@@ -124,16 +127,16 @@ export function createShapeTool(editor: Editor, canvas: CanvasView, kind: ShapeK
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       if (kind === 'line') {
-        const a = editor.viewport.toScreen(origin);
-        const b = editor.viewport.toScreen(current);
+        const a = editor.view.viewport.toScreen(origin);
+        const b = editor.view.viewport.toScreen(current);
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
         ctx.stroke();
       } else {
         const box = area();
-        const topLeft = editor.viewport.toScreen({ x: box.x, y: box.y });
-        const bottomRight = editor.viewport.toScreen({ x: box.x + box.width, y: box.y + box.height });
+        const topLeft = editor.view.viewport.toScreen({ x: box.x, y: box.y });
+        const bottomRight = editor.view.viewport.toScreen({ x: box.x + box.width, y: box.y + box.height });
         ctx.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
       }
       ctx.restore();

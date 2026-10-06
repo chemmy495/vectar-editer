@@ -1,7 +1,6 @@
 import { byId, h } from './dom.ts';
 import { Subscriptions, disposeAll, type Component } from './lifecycle.ts';
 import { showDialog, showMessage } from './dialog.ts';
-import { Editor, type ToolId } from './editor.ts';
 import { CanvasView } from './canvas.ts';
 import { createFileOperations } from './files.ts';
 import { createToolbar } from './panels/toolbar.ts';
@@ -16,11 +15,14 @@ import { createShapeTool } from './tools/shape.ts';
 import { createTextTool } from './tools/text.ts';
 import { createEyedropperTool, createPanTool, createZoomTool } from './tools/utility.ts';
 import {
-  clearFlagEverywhere, convertSelectionToPaths, groupSelection, reorderSelection,
-  reverseSelectedPaths, setSelectionFlag, simplifySelectedPaths, ungroupSelection,
+  clearFlagEverywhere, convertSelectionToPaths, deleteSelection, duplicate,
+  groupSelection, paste, reorderSelection, reverseSelectedPaths, setSelectionFlag,
+  simplifySelectedPaths, ungroupSelection,
 } from './editing.ts';
 import * as commands from '../core/model/commands.ts';
 import type { MenuCommand } from '../main/ipc.ts';
+import type { ToolId } from './state/tool-settings.ts';
+import { createEditorContext } from './state/context.ts';
 
 const SHORTCUTS: Array<[string, string]> = [
   ['V / A', 'Select / Edit nodes'],
@@ -45,7 +47,7 @@ const SHORTCUTS: Array<[string, string]> = [
 function main(): void {
   /** Everything the shell itself subscribes to, released on teardown. */
   const subscriptions = new Subscriptions();
-  const editor = new Editor();
+  const editor = createEditorContext();
   const canvas = new CanvasView(editor, byId('viewport'));
   const files = createFileOperations(editor, canvas);
 
@@ -63,8 +65,8 @@ function main(): void {
   canvas.registerTool(createZoomTool(editor, canvas));
   canvas.registerTool(createPanTool(editor, canvas));
 
-  editor.events.bind(subscriptions, ['tool'], () => canvas.setActiveTool(editor.tool));
-  canvas.setActiveTool(editor.tool);
+  editor.events.bind(subscriptions, ['tool'], () => canvas.setActiveTool(editor.tools.active));
+  canvas.setActiveTool(editor.tools.active);
 
   // --- panels ------------------------------------------------------------
   const components: Component[] = [
@@ -76,7 +78,7 @@ function main(): void {
   ];
 
   // --- window title ------------------------------------------------------
-  const updateTitle = () => window.vectar.setTitle(editor.documentName(), editor.dirty);
+  const updateTitle = () => window.vectar.setTitle(editor.docs.name, editor.docs.dirty);
   editor.events.bind(subscriptions, ['document'], updateTitle);
   updateTitle();
 
@@ -111,7 +113,7 @@ function main(): void {
   const runCommand = (command: MenuCommand | string): void => {
     const tool = TOOL_COMMANDS[command];
     if (tool) {
-      editor.setTool(tool);
+      editor.tools.setActive(tool);
       return;
     }
 
@@ -124,23 +126,23 @@ function main(): void {
       case 'file.importSvg': void files.importSvgFile(); break;
       case 'file.export': void files.exportDocument(); break;
 
-      case 'edit.undo': editor.undo(); break;
-      case 'edit.redo': editor.redo(); break;
-      case 'edit.cut': editor.cut(); break;
-      case 'edit.copy': editor.copy(); break;
-      case 'edit.paste': editor.paste(); break;
-      case 'edit.duplicate': editor.duplicate(); break;
-      case 'edit.delete': editor.deleteSelection(); break;
-      case 'edit.selectAll': editor.selectAll(); break;
-      case 'edit.deselect': editor.clearSelection(); break;
+      case 'edit.undo': editor.docs.undo(); break;
+      case 'edit.redo': editor.docs.redo(); break;
+      case 'edit.cut': editor.clipboard.cut(); break;
+      case 'edit.copy': editor.clipboard.copy(); break;
+      case 'edit.paste': paste(editor); break;
+      case 'edit.duplicate': duplicate(editor); break;
+      case 'edit.delete': deleteSelection(editor); break;
+      case 'edit.selectAll': editor.selection.selectAll(); break;
+      case 'edit.deselect': editor.selection.clear(); break;
 
-      case 'view.zoomIn': editor.viewport.zoomAt({ x: editor.viewport.width / 2, y: editor.viewport.height / 2 }, 1.25); editor.emit('view'); break;
-      case 'view.zoomOut': editor.viewport.zoomAt({ x: editor.viewport.width / 2, y: editor.viewport.height / 2 }, 1 / 1.25); editor.emit('view'); break;
+      case 'view.zoomIn': editor.view.zoomBy(1.25); break;
+      case 'view.zoomOut': editor.view.zoomBy(1 / 1.25); break;
       case 'view.zoomFit': canvas.zoomFit(); break;
-      case 'view.zoomActual': editor.viewport.setZoom(1); editor.emit('view'); break;
-      case 'view.toggleGrid': editor.showGrid = !editor.showGrid; editor.emit('view'); break;
-      case 'view.toggleSnap': editor.snapToGrid = !editor.snapToGrid; editor.emit('view', 'status'); break;
-      case 'view.toggleRulers': editor.showRulers = !editor.showRulers; editor.emit('view'); break;
+      case 'view.zoomActual': editor.view.setZoom(1); break;
+      case 'view.toggleGrid': editor.view.toggleGrid(); break;
+      case 'view.toggleSnap': editor.view.toggleSnap(); break;
+      case 'view.toggleRulers': editor.view.toggleRulers(); break;
 
       case 'object.group': groupSelection(editor); break;
       case 'object.ungroup': ungroupSelection(editor); break;
@@ -175,17 +177,17 @@ function main(): void {
   const runLayerCommand = (action: 'add' | 'delete') => {
     // The layers panel owns the buttons; the menu reuses the same operations.
     if (action === 'add') {
-      const added = commands.addLayer(editor.document);
-      editor.transaction('Add layer', () => editor.run(added.command));
-      editor.setActiveLayer(added.layer.id);
+      const added = commands.addLayer(editor.docs.document);
+      editor.docs.transaction('Add layer', () => editor.docs.run(added.command));
+      editor.selection.setActiveLayer(added.layer.id);
     } else {
-      const command = commands.removeLayer(editor.document, editor.activeLayerId);
+      const command = commands.removeLayer(editor.docs.document, editor.selection.activeLayerId);
       if (!command) {
-        editor.setStatus('A document needs at least one layer');
+        editor.status.set('A document needs at least one layer');
         return;
       }
-      editor.transaction('Delete layer', () => editor.run(command));
-      editor.setActiveLayer(editor.document.layers[0]?.id ?? '');
+      editor.docs.transaction('Delete layer', () => editor.docs.run(command));
+      editor.selection.setActiveLayer(editor.docs.document.layers[0]?.id ?? '');
     }
   };
 
@@ -213,18 +215,18 @@ function main(): void {
       // Accelerators that the Electron menu does not already own.
       if (event.key.toLowerCase() === 'z' && event.shiftKey) {
         event.preventDefault();
-        editor.redo();
+        editor.docs.redo();
       }
       return;
     }
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
       event.preventDefault();
-      editor.deleteSelection();
+      deleteSelection(editor);
       return;
     }
     if (event.key === 'Escape') {
-      editor.clearSelection();
+      editor.selection.clear();
       return;
     }
 
@@ -235,7 +237,7 @@ function main(): void {
     const tool = toolKeys[event.key.toLowerCase()];
     if (tool) {
       event.preventDefault();
-      editor.setTool(tool);
+      editor.tools.setActive(tool);
     }
   });
 
@@ -255,7 +257,7 @@ function main(): void {
       .map((file) => window.vectar.pathForFile(file))
       .filter((path): path is string => typeof path === 'string' && path.length > 0);
     if (paths.length === 0) {
-      editor.setStatus('Could not read the dropped file');
+      editor.status.set('Could not read the dropped file');
       return;
     }
     void (async () => {
@@ -271,7 +273,7 @@ function main(): void {
   window.vectar.onRequestClose(() => files.confirmDiscard());
 
   canvas.zoomFit();
-  editor.setStatus('Ready. Press F1 for shortcuts.');
+  editor.status.set('Ready. Press F1 for shortcuts.');
 }
 
 main();

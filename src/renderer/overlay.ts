@@ -4,8 +4,9 @@ import type { Rect } from '../core/geometry/rect.ts';
 import * as query from '../core/model/query.ts';
 import type { SceneNode } from '../core/model/node.ts';
 import { segmentCount } from '../core/path/path.ts';
-import type { Editor } from './editor.ts';
-import { anchorKey } from './editor.ts';
+
+import { anchorKey } from './state/selection-store.ts';
+import type { EditorContext } from './state/context.ts';
 
 export const HANDLE_SIZE = 8;
 export const ROTATE_HANDLE_OFFSET = 22;
@@ -84,7 +85,7 @@ function drawHandle(ctx: CanvasRenderingContext2D, position: Vec, shape: 'square
 }
 
 /** Outlines a node's geometry in screen space, for selection feedback. */
-export function outlineNode(ctx: CanvasRenderingContext2D, editor: Editor, node: SceneNode, world: Matrix, color: string): void {
+export function outlineNode(ctx: CanvasRenderingContext2D, editor: EditorContext, node: SceneNode, world: Matrix, color: string): void {
   const bounds = query.localBounds(node, editor.measureText);
   if (!bounds) return;
   const corners = [
@@ -92,7 +93,7 @@ export function outlineNode(ctx: CanvasRenderingContext2D, editor: Editor, node:
     { x: bounds.x + bounds.width, y: bounds.y },
     { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
     { x: bounds.x, y: bounds.y + bounds.height },
-  ].map((corner) => editor.viewport.toScreen({
+  ].map((corner) => editor.view.viewport.toScreen({
     x: world.a * corner.x + world.c * corner.y + world.e,
     y: world.b * corner.x + world.d * corner.y + world.f,
   }));
@@ -136,16 +137,16 @@ export function drawMarquee(ctx: CanvasRenderingContext2D, area: Rect): void {
 }
 
 /** Anchors and bezier handles of a path being edited with the node tool. */
-export function drawNodeEditingOverlay(ctx: CanvasRenderingContext2D, editor: Editor, node: SceneNode): void {
+export function drawNodeEditingOverlay(ctx: CanvasRenderingContext2D, editor: EditorContext, node: SceneNode): void {
   if (node.type !== 'path') return;
-  const world = compose(query.parentTransform(editor.document, node.id), node.transform);
+  const world = compose(query.parentTransform(editor.docs.document, node.id), node.transform);
   const toScreen = (point: Vec): Vec =>
-    editor.viewport.toScreen({
+    editor.view.viewport.toScreen({
       x: world.a * point.x + world.c * point.y + world.e,
       y: world.b * point.x + world.d * point.y + world.f,
     });
 
-  const selected = editor.anchorSelection?.nodeId === node.id ? editor.anchorSelection.anchors : new Set<string>();
+  const selected = editor.selection.anchors?.nodeId === node.id ? editor.selection.anchors.anchors : new Set<string>();
 
   // The path outline, so anchors read against the shape.
   ctx.save();
@@ -198,10 +199,10 @@ export function drawNodeEditingOverlay(ctx: CanvasRenderingContext2D, editor: Ed
 }
 
 /** The page border and drop shadow around the document area. */
-export function drawCanvasFrame(ctx: CanvasRenderingContext2D, editor: Editor): void {
-  const bounds = editor.documentBounds();
-  const topLeft = editor.viewport.toScreen({ x: bounds.x, y: bounds.y });
-  const bottomRight = editor.viewport.toScreen({ x: bounds.width, y: bounds.height });
+export function drawCanvasFrame(ctx: CanvasRenderingContext2D, editor: EditorContext): void {
+  const bounds = editor.docs.bounds;
+  const topLeft = editor.view.viewport.toScreen({ x: bounds.x, y: bounds.y });
+  const bottomRight = editor.view.viewport.toScreen({ x: bounds.width, y: bounds.height });
   const width = bottomRight.x - topLeft.x;
   const height = bottomRight.y - topLeft.y;
 
@@ -221,26 +222,26 @@ export function drawCanvasFrame(ctx: CanvasRenderingContext2D, editor: Editor): 
 }
 
 /** Grid lines, drawn only when they would not be too dense to read. */
-export function drawGrid(ctx: CanvasRenderingContext2D, editor: Editor): void {
-  const spacing = editor.gridSize * editor.viewport.scale;
+export function drawGrid(ctx: CanvasRenderingContext2D, editor: EditorContext): void {
+  const spacing = editor.view.gridSize * editor.view.viewport.scale;
   if (spacing < 6) return;
-  const area = editor.viewport.visibleArea();
-  const startX = Math.floor(area.x / editor.gridSize) * editor.gridSize;
-  const startY = Math.floor(area.y / editor.gridSize) * editor.gridSize;
+  const area = editor.view.viewport.visibleArea();
+  const startX = Math.floor(area.x / editor.view.gridSize) * editor.view.gridSize;
+  const startY = Math.floor(area.y / editor.view.gridSize) * editor.view.gridSize;
 
   ctx.save();
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = startX; x <= area.x + area.width; x += editor.gridSize) {
-    const screenX = Math.round(editor.viewport.toScreen({ x, y: 0 }).x) + 0.5;
+  for (let x = startX; x <= area.x + area.width; x += editor.view.gridSize) {
+    const screenX = Math.round(editor.view.viewport.toScreen({ x, y: 0 }).x) + 0.5;
     ctx.moveTo(screenX, 0);
-    ctx.lineTo(screenX, editor.viewport.height);
+    ctx.lineTo(screenX, editor.view.viewport.height);
   }
-  for (let y = startY; y <= area.y + area.height; y += editor.gridSize) {
-    const screenY = Math.round(editor.viewport.toScreen({ x: 0, y }).y) + 0.5;
+  for (let y = startY; y <= area.y + area.height; y += editor.view.gridSize) {
+    const screenY = Math.round(editor.view.viewport.toScreen({ x: 0, y }).y) + 0.5;
     ctx.moveTo(0, screenY);
-    ctx.lineTo(editor.viewport.width, screenY);
+    ctx.lineTo(editor.view.viewport.width, screenY);
   }
   ctx.stroke();
   ctx.restore();

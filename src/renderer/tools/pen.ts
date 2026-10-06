@@ -3,15 +3,17 @@ import { anchor, type Anchor, type PathData } from '../../core/path/path.ts';
 import { createPathNode } from '../../core/model/node.ts';
 import { cloneFill, cloneStroke, defaultStroke, noFill } from '../../core/model/style.ts';
 import { BLACK } from '../../core/model/color.ts';
-import type { Editor } from '../editor.ts';
+
 import type { CanvasView } from '../canvas.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
+import { addNodes } from '../editing.ts';
 
 /**
  * Bezier pen. Click to place a corner anchor, drag to pull out symmetric
  * handles, click the first anchor to close, Enter or Escape to finish.
  */
-export function createPenTool(editor: Editor, canvas: CanvasView): Tool {
+export function createPenTool(editor: EditorContext, canvas: CanvasView): Tool {
   let anchors: Anchor[] = [];
   let dragging = false;
   let cursor: Vec | null = null;
@@ -34,13 +36,13 @@ export function createPenTool(editor: Editor, canvas: CanvasView): Tool {
       return;
     }
     const node = createPathNode(previewPath(closed), 'Path');
-    node.fill = closed ? cloneFill(editor.fill) : noFill();
-    node.stroke = editor.stroke.paint.type === 'none' && !closed
+    node.fill = closed ? cloneFill(editor.tools.fill) : noFill();
+    node.stroke = editor.tools.stroke.paint.type === 'none' && !closed
       ? defaultStroke(BLACK, 1)
-      : cloneStroke(editor.stroke);
-    editor.addNodes([node], 'Draw path');
+      : cloneStroke(editor.tools.stroke);
+    addNodes(editor, [node], 'Draw path');
     reset();
-    editor.setTool('select');
+    editor.tools.setActive('select');
   };
 
   return {
@@ -49,10 +51,10 @@ export function createPenTool(editor: Editor, canvas: CanvasView): Tool {
 
     onPointerDown(event, point) {
       if (event.button !== 0) return;
-      const snapped = editor.snap(point);
+      const snapped = editor.view.snap(point);
 
       // Clicking the first anchor closes the path.
-      if (anchors.length > 1 && dist(snapped, anchors[0].point) <= editor.viewport.toDocumentLength(8)) {
+      if (anchors.length > 1 && dist(snapped, anchors[0].point) <= editor.view.viewport.toDocumentLength(8)) {
         commit(true);
         return;
       }
@@ -104,7 +106,7 @@ export function createPenTool(editor: Editor, canvas: CanvasView): Tool {
 
     drawOverlay(ctx) {
       if (anchors.length === 0) return;
-      const toScreen = (p: Vec) => editor.viewport.toScreen(p);
+      const toScreen = (p: Vec) => editor.view.viewport.toScreen(p);
 
       ctx.save();
       ctx.strokeStyle = '#4c9aff';

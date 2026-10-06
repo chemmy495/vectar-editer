@@ -6,15 +6,18 @@ import { BLACK } from '../../core/model/color.ts';
 import { tracePath } from '../../core/render/render.ts';
 import { toCss } from '../../core/model/color.ts';
 import { paintColor } from '../../core/model/style.ts';
-import type { Editor, ToolId } from '../editor.ts';
+
 import type { CanvasView } from '../canvas.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
+import type { ToolId } from '../state/tool-settings.ts';
+import { addNodes } from '../editing.ts';
 
 /**
  * Freehand drawing. The pencil produces a stroked centreline; the brush
  * produces a filled, pressure-varying outline.
  */
-export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pencil' | 'brush'): Tool {
+export function createFreehandTool(editor: EditorContext, canvas: CanvasView, mode: 'pencil' | 'brush'): Tool {
   let points: StrokePoint[] = [];
   let drawing = false;
 
@@ -31,8 +34,8 @@ export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pe
     }
     const path =
       mode === 'brush'
-        ? brushStrokeToPath(points, editor.brush)
-        : pencilStrokeToPath(points, editor.brush.smoothing, Math.max(0.4, editor.brush.fitTolerance));
+        ? brushStrokeToPath(points, editor.tools.brush)
+        : pencilStrokeToPath(points, editor.tools.brush.smoothing, Math.max(0.4, editor.tools.brush.fitTolerance));
 
     points = [];
     drawing = false;
@@ -43,13 +46,13 @@ export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pe
     }
 
     if (mode === 'brush') {
-      const fill = editor.fill.paint.type === 'none' ? defaultFill(BLACK) : cloneFill(editor.fill);
-      editor.addNodes([createBrushNode(path, fill, 'Brush stroke')], 'Brush stroke');
+      const fill = editor.tools.fill.paint.type === 'none' ? defaultFill(BLACK) : cloneFill(editor.tools.fill);
+      addNodes(editor, [createBrushNode(path, fill, 'Brush stroke')], 'Brush stroke');
     } else {
-      const stroke = editor.stroke.paint.type === 'none'
-        ? defaultStroke(BLACK, Math.max(0.5, editor.brush.width / 4))
-        : cloneStroke(editor.stroke);
-      editor.addNodes([createStrokeNode(path, stroke, 'Pencil stroke')], 'Pencil stroke');
+      const stroke = editor.tools.stroke.paint.type === 'none'
+        ? defaultStroke(BLACK, Math.max(0.5, editor.tools.brush.width / 4))
+        : cloneStroke(editor.tools.stroke);
+      addNodes(editor, [createStrokeNode(path, stroke, 'Pencil stroke')], 'Pencil stroke');
     }
   };
 
@@ -94,12 +97,12 @@ export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pe
 
     drawOverlay(ctx) {
       if (points.length === 0) return;
-      const toScreen = (p: Vec) => editor.viewport.toScreen(p);
+      const toScreen = (p: Vec) => editor.view.viewport.toScreen(p);
 
       if (mode === 'brush') {
         // Preview the real outline so width and pressure are visible live.
-        const path = brushStrokeToPath(points, { ...editor.brush, fitTolerance: 0 });
-        const color = paintColor(editor.fill.paint) ?? BLACK;
+        const path = brushStrokeToPath(points, { ...editor.tools.brush, fitTolerance: 0 });
+        const color = paintColor(editor.tools.fill.paint) ?? BLACK;
         ctx.save();
         ctx.fillStyle = toCss(color);
         ctx.beginPath();
@@ -108,8 +111,8 @@ export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pe
             closed: subpath.closed,
             anchors: subpath.anchors.map((item) => ({
               point: toScreen(item.point),
-              inHandle: { x: item.inHandle.x * editor.viewport.scale, y: item.inHandle.y * editor.viewport.scale },
-              outHandle: { x: item.outHandle.x * editor.viewport.scale, y: item.outHandle.y * editor.viewport.scale },
+              inHandle: { x: item.inHandle.x * editor.view.viewport.scale, y: item.inHandle.y * editor.view.viewport.scale },
+              outHandle: { x: item.outHandle.x * editor.view.viewport.scale, y: item.outHandle.y * editor.view.viewport.scale },
               type: item.type,
             })),
           })),
@@ -120,10 +123,10 @@ export function createFreehandTool(editor: Editor, canvas: CanvasView, mode: 'pe
         return;
       }
 
-      const color = paintColor(editor.stroke.paint) ?? BLACK;
+      const color = paintColor(editor.tools.stroke.paint) ?? BLACK;
       ctx.save();
       ctx.strokeStyle = toCss(color);
-      ctx.lineWidth = Math.max(1, editor.stroke.width * editor.viewport.scale);
+      ctx.lineWidth = Math.max(1, editor.tools.stroke.width * editor.view.viewport.scale);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();

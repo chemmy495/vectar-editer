@@ -2,10 +2,12 @@ import { compose, scaling } from '../core/geometry/matrix.ts';
 import type { Vec } from '../core/geometry/vec.ts';
 import { renderDocument } from '../core/render/render.ts';
 import * as query from '../core/model/query.ts';
-import type { Editor, ToolId } from './editor.ts';
+
 import { drawCanvasFrame, drawGrid, drawNodeEditingOverlay, outlineNode } from './overlay.ts';
 import type { Tool } from './tool.ts';
 import { Subscriptions, type Component } from './lifecycle.ts';
+import type { EditorContext } from './state/context.ts';
+import type { ToolId } from './state/tool-settings.ts';
 
 /**
  * The drawing surface. It owns the canvas element, keeps it sized to its
@@ -15,7 +17,7 @@ import { Subscriptions, type Component } from './lifecycle.ts';
 export class CanvasView implements Component {
   readonly element: HTMLCanvasElement;
   private context: CanvasRenderingContext2D;
-  private editor: Editor;
+  private editor: EditorContext;
   private tools = new Map<ToolId, Tool>();
   private activeTool: Tool | null = null;
   private frameRequested = false;
@@ -30,7 +32,7 @@ export class CanvasView implements Component {
   private subscriptions = new Subscriptions();
   private resizeObserver: ResizeObserver;
 
-  constructor(editor: Editor, container: HTMLElement) {
+  constructor(editor: EditorContext, container: HTMLElement) {
     this.editor = editor;
     this.element = document.createElement('canvas');
     this.element.className = 'viewport-canvas';
@@ -85,7 +87,7 @@ export class CanvasView implements Component {
   /** Converts a pointer event into document coordinates. */
   toDocumentPoint(event: { clientX: number; clientY: number }): Vec {
     const rect = this.element.getBoundingClientRect();
-    return this.editor.viewport.toDocument({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    return this.editor.view.viewport.toDocument({ x: event.clientX - rect.left, y: event.clientY - rect.top });
   }
 
   toScreenPoint(event: { clientX: number; clientY: number }): Vec {
@@ -112,8 +114,8 @@ export class CanvasView implements Component {
     this.element.style.height = `${height}px`;
     this.element.width = Math.max(1, Math.round(width * ratio));
     this.element.height = Math.max(1, Math.round(height * ratio));
-    this.editor.viewport.width = width;
-    this.editor.viewport.height = height;
+    this.editor.view.viewport.width = width;
+    this.editor.view.viewport.height = height;
     this.requestRender();
   }
 
@@ -131,7 +133,7 @@ export class CanvasView implements Component {
   render(): void {
     const ctx = this.context;
     const ratio = window.devicePixelRatio || 1;
-    const { width, height } = this.editor.viewport;
+    const { width, height } = this.editor.view.viewport;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this.element.width, this.element.height);
@@ -141,30 +143,30 @@ export class CanvasView implements Component {
 
     drawCanvasFrame(ctx, this.editor);
 
-    renderDocument(ctx, this.editor.document, {
-      viewTransform: compose(scaling(ratio), this.editor.viewport.matrix()),
+    renderDocument(ctx, this.editor.docs.document, {
+      viewTransform: compose(scaling(ratio), this.editor.view.viewport.matrix()),
       resolveImage: this.resolveImage,
     });
 
     // Overlays are drawn in CSS pixels so handles keep a constant size.
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    if (this.editor.showGrid) drawGrid(ctx, this.editor);
+    if (this.editor.view.showGrid) drawGrid(ctx, this.editor);
 
-    if (this.hoveredNodeId && !this.editor.selection.has(this.hoveredNodeId)) {
-      const location = query.findNode(this.editor.document, this.hoveredNodeId);
+    if (this.hoveredNodeId && !this.editor.selection.ids.has(this.hoveredNodeId)) {
+      const location = query.findNode(this.editor.docs.document, this.hoveredNodeId);
       if (location) {
         outlineNode(
           ctx,
           this.editor,
           location.node,
-          compose(query.parentTransform(this.editor.document, location.node.id), location.node.transform),
+          compose(query.parentTransform(this.editor.docs.document, location.node.id), location.node.transform),
           'rgba(76, 154, 255, 0.5)',
         );
       }
     }
 
-    if (this.editor.tool === 'node') {
-      for (const node of this.editor.selectedNodes()) drawNodeEditingOverlay(ctx, this.editor, node);
+    if (this.editor.tools.active === 'node') {
+      for (const node of this.editor.selection.nodes()) drawNodeEditingOverlay(ctx, this.editor, node);
     }
 
     this.activeTool?.drawOverlay?.(ctx);
@@ -227,10 +229,10 @@ export class CanvasView implements Component {
 
     this.element.addEventListener('pointermove', (event) => {
       if (this.panning && this.panning.pointerId === event.pointerId) {
-        this.editor.viewport.panBy(event.clientX - this.panning.lastX, event.clientY - this.panning.lastY);
+        this.editor.view.viewport.panBy(event.clientX - this.panning.lastX, event.clientY - this.panning.lastY);
         this.panning.lastX = event.clientX;
         this.panning.lastY = event.clientY;
-        this.editor.emit('view');
+        this.editor.events.emit('view');
         return;
       }
       this.activeTool?.onPointerMove?.(event, this.toDocumentPoint(event));
@@ -267,15 +269,15 @@ export class CanvasView implements Component {
         const screen = this.toScreenPoint(event);
         if (event.ctrlKey || event.metaKey) {
           // Pinch-zoom gestures arrive as ctrl+wheel.
-          this.editor.viewport.zoomAt(screen, Math.exp(-event.deltaY * 0.01));
+          this.editor.view.viewport.zoomAt(screen, Math.exp(-event.deltaY * 0.01));
         } else if (event.shiftKey) {
-          this.editor.viewport.panBy(-event.deltaY, 0);
+          this.editor.view.viewport.panBy(-event.deltaY, 0);
         } else if (event.altKey) {
-          this.editor.viewport.zoomAt(screen, event.deltaY < 0 ? 1.1 : 1 / 1.1);
+          this.editor.view.viewport.zoomAt(screen, event.deltaY < 0 ? 1.1 : 1 / 1.1);
         } else {
-          this.editor.viewport.panBy(-event.deltaX, -event.deltaY);
+          this.editor.view.viewport.panBy(-event.deltaX, -event.deltaY);
         }
-        this.editor.emit('view');
+        this.editor.events.emit('view');
       },
       { passive: false },
     );
@@ -283,13 +285,13 @@ export class CanvasView implements Component {
 
   /** Frames the whole page in the window. */
   zoomFit(): void {
-    this.editor.viewport.fit(this.editor.documentBounds());
-    this.editor.emit('view');
+    this.editor.view.viewport.fit(this.editor.docs.bounds);
+    this.editor.events.emit('view');
   }
 
   zoomToSelection(): void {
-    const bounds = this.editor.selectionBounds();
-    this.editor.viewport.fit(bounds ?? this.editor.documentBounds());
-    this.editor.emit('view');
+    const bounds = this.editor.selection.bounds();
+    this.editor.view.viewport.fit(bounds ?? this.editor.docs.bounds);
+    this.editor.events.emit('view');
   }
 }

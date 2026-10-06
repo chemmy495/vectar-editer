@@ -6,10 +6,11 @@ import type { PathNode } from '../../core/model/node.ts';
 import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import type { Command } from '../../core/model/history.ts';
-import { anchorKey, parseAnchorKey, type Editor } from '../editor.ts';
+import { anchorKey, parseAnchorKey } from '../state/selection-store.ts';
 import type { CanvasView } from '../canvas.ts';
 import { drawMarquee } from '../overlay.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
 
 type Target = { subpath: number; anchor: number };
 type HandleTarget = Target & { side: 'in' | 'out' };
@@ -27,34 +28,34 @@ type Gesture =
  * The UI calls this the node tool, following other vector editors. Inside the
  * codebase a node is a `SceneNode`, so everything here says anchor instead.
  */
-export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
+export function createAnchorTool(editor: EditorContext, canvas: CanvasView): Tool {
   let gesture: Gesture = { kind: 'none' };
 
   const activePath = (): PathNode | null => {
-    const node = editor.singleSelectedPath();
+    const node = editor.selection.singlePath();
     return node && node.type === 'path' ? node : null;
   };
 
   /** Maps a document point into the active path's local coordinates. */
   const toLocal = (node: PathNode, point: Vec): Vec => {
-    const world = compose(query.parentTransform(editor.document, node.id), node.transform);
+    const world = compose(query.parentTransform(editor.docs.document, node.id), node.transform);
     const inverse = invert(world);
     if (!inverse) return point;
     return { x: inverse.a * point.x + inverse.c * point.y + inverse.e, y: inverse.b * point.x + inverse.d * point.y + inverse.f };
   };
 
   const localTolerance = (node: PathNode): number => {
-    const world = compose(query.parentTransform(editor.document, node.id), node.transform);
+    const world = compose(query.parentTransform(editor.docs.document, node.id), node.transform);
     const scaleFactor = Math.sqrt(Math.abs(world.a * world.d - world.b * world.c)) || 1;
-    return editor.viewport.toDocumentLength(7) / scaleFactor;
+    return editor.view.viewport.toDocumentLength(7) / scaleFactor;
   };
 
   const selectedKeys = (): Set<string> =>
-    editor.anchorSelection?.anchors ?? new Set<string>();
+    editor.selection.anchors?.anchors ?? new Set<string>();
 
   const setSelectedKeys = (node: PathNode, keys: Set<string>) => {
-    editor.anchorSelection = { nodeId: node.id, anchors: keys };
-    editor.emit('selection');
+    editor.selection.anchors = { nodeId: node.id, anchors: keys };
+    editor.events.emit('selection');
   };
 
   const findAnchorAt = (node: PathNode, local: Vec): Target | null => {
@@ -95,7 +96,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
         node.path = clonePath(before);
       },
     };
-    editor.history.push(command);
+    editor.docs.history.push(command);
   };
 
   /** Keeps smooth and symmetric anchors consistent after a handle moves. */
@@ -121,9 +122,9 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
       const node = activePath();
       if (!node) {
         // Pick a path to edit first.
-        const hit = query.hitTest(editor.document, point, { tolerance: editor.viewport.toDocumentLength(4), deep: true, measure: editor.measureText });
-        if (hit && hit.type === 'path') editor.setSelection([hit.id]);
-        else editor.clearSelection();
+        const hit = query.hitTest(editor.docs.document, point, { tolerance: editor.view.viewport.toDocumentLength(4), deep: true, measure: editor.measureText });
+        if (hit && hit.type === 'path') editor.selection.set([hit.id]);
+        else editor.selection.clear();
         return;
       }
 
@@ -167,7 +168,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
         node.path = updated;
         commitPath(node, before, 'Add anchor');
         setSelectedKeys(node, new Set([anchorKey(near.subpath, near.index + 1)]));
-        editor.emit('document');
+        editor.events.emit('document');
         return;
       }
 
@@ -197,7 +198,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
           if (anchor) anchor.point = add(anchor.point, constrained);
         }
         node.path = updated;
-        editor.emit('document');
+        editor.events.emit('document');
         return;
       }
 
@@ -213,7 +214,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
           // Alt temporarily breaks the smooth/symmetric constraint.
           if (gesture.mirror) enforceAnchorType(node, gesture.target);
         }
-        editor.emit('document');
+        editor.events.emit('document');
       }
     },
 
@@ -228,7 +229,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
         const area = fromCorners(gesture.origin, gesture.current);
         if (area.width > 1 || area.height > 1) {
           const keys = gesture.additive ? new Set(selectedKeys()) : new Set<string>();
-          const world = compose(query.parentTransform(editor.document, node.id), node.transform);
+          const world = compose(query.parentTransform(editor.docs.document, node.id), node.transform);
           node.path.subpaths.forEach((subpath, s) => {
             subpath.anchors.forEach((anchor, a) => {
               const worldPoint = {
@@ -278,7 +279,7 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
       }
       node.path = updated;
       commitPath(node, before, 'Change anchor type');
-      editor.emit('document');
+      editor.events.emit('document');
     },
 
     onKeyDown(event) {
@@ -299,16 +300,16 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
         }
         updated.subpaths = updated.subpaths.filter((subpath) => subpath.anchors.length > 1);
         if (updated.subpaths.length === 0) {
-          editor.transaction('Delete path', () => {
-            editor.run(commands.removeNodes(editor.document, [node.id]));
+          editor.docs.transaction('Delete path', () => {
+            editor.docs.run(commands.removeNodes(editor.docs.document, [node.id]));
           });
-          editor.clearSelection();
+          editor.selection.clear();
           return true;
         }
         node.path = updated;
         commitPath(node, before, 'Delete anchors');
         setSelectedKeys(node, new Set());
-        editor.emit('document');
+        editor.events.emit('document');
         return true;
       }
 
@@ -329,14 +330,14 @@ export function createAnchorTool(editor: Editor, canvas: CanvasView): Tool {
       }
       node.path = updated;
       commitPath(node, before, 'Nudge anchors');
-      editor.emit('document');
+      editor.events.emit('document');
       return true;
     },
 
     drawOverlay(ctx) {
       if (gesture.kind !== 'marquee') return;
-      const origin = editor.viewport.toScreen(gesture.origin);
-      const current = editor.viewport.toScreen(gesture.current);
+      const origin = editor.view.viewport.toScreen(gesture.origin);
+      const current = editor.view.viewport.toScreen(gesture.current);
       drawMarquee(ctx, fromCorners(origin, current));
     },
 

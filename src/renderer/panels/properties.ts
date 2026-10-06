@@ -9,7 +9,8 @@ import * as commands from '../../core/model/commands.ts';
 import type { PathNode, TextNode } from '../../core/model/node.ts';
 import type { VectarDocument } from '../../core/model/document.ts';
 import { Subscriptions, type Component } from '../lifecycle.ts';
-import type { Editor } from '../editor.ts';
+import type { EditorContext } from '../state/context.ts';
+
 
 /**
  * Colour swatch plus alpha slider, shared by the fill and stroke sections.
@@ -66,7 +67,7 @@ function colorControl(
  * The right-hand inspector. It shows the style and geometry of the selection,
  * or the defaults that new objects will take when nothing is selected.
  */
-export function createPropertiesPanel(editor: Editor, container: HTMLElement): Component {
+export function createPropertiesPanel(editor: EditorContext, container: HTMLElement): Component {
   /**
    * A style drag in progress. `before` holds the values from before the drag
    * started, so every live update is derived from those rather than compounding
@@ -93,15 +94,15 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
     const after = pending.before.map((entry) => ({ node: entry.node, value: entry.node[key] }));
     if (after.every((entry, i) => entry.value === pending.before[i].value)) return;
 
-    editor.history.push({
+    editor.docs.history.push({
       label: pending.label,
       redo: () => {
         for (const entry of after) (entry.node[key] as Fill | Stroke) = entry.value;
-        editor.emit('document');
+        editor.events.emit('document');
       },
       undo: () => {
         for (const entry of pending.before) (entry.node[key] as Fill | Stroke) = entry.value;
-        editor.emit('document');
+        editor.events.emit('document');
       },
     });
   };
@@ -121,10 +122,10 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
     // still emits an event this panel listens to.
     if (live) beginInteraction();
 
-    const nodes = editor.selectedNodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
+    const nodes = editor.selection.nodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
     if (nodes.length === 0) {
-      if (key === 'fill') editor.setFill(build(editor.fill as T) as Fill);
-      else editor.setStroke(build(editor.stroke as T) as Stroke);
+      if (key === 'fill') editor.tools.setFill(build(editor.tools.fill as T) as Fill);
+      else editor.tools.setStroke(build(editor.tools.stroke as T) as Stroke);
       if (!live) endInteraction();
       return;
     }
@@ -145,8 +146,8 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
       (node[key] as Fill | Stroke) = build(origin[i].value as T);
     });
     // A preview is a real change to the document even before it is recorded.
-    editor.markDirty();
-    editor.emit('document');
+    editor.docs.markDirty();
+    editor.events.emit('document');
 
     if (!live) {
       commitPendingStyle();
@@ -160,10 +161,10 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
   const applyStroke = (build: (stroke: Stroke) => Stroke, live = false) =>
     applyStyle<Stroke>('stroke', build, live, 'Change stroke');
 
-  /** Style shown in the panel: the selection's, or the editor defaults. */
+  /** Style shown in the panel: the selection's, or the defaults for new objects. */
   const currentStyle = (): { fill: Fill; stroke: Stroke } => {
-    const styled = editor.selectedNodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
-    if (styled.length === 0) return { fill: editor.fill, stroke: editor.stroke };
+    const styled = editor.selection.nodes().filter((n): n is PathNode | TextNode => n.type === 'path' || n.type === 'text');
+    if (styled.length === 0) return { fill: editor.tools.fill, stroke: editor.tools.stroke };
     return { fill: styled[0].fill, stroke: styled[0].stroke };
   };
 
@@ -221,15 +222,15 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
   };
 
   const transformSection = (): HTMLElement | null => {
-    const bounds = editor.selectionBounds();
-    if (!bounds || editor.selection.size === 0) return null;
-    const ids = [...editor.selection];
+    const bounds = editor.selection.bounds();
+    if (!bounds || editor.selection.ids.size === 0) return null;
+    const ids = [...editor.selection.ids];
 
     /** Moves the selection so its bounding box starts at the given coordinate. */
     const moveTo = (axis: 'x' | 'y', value: number) => {
       const delta = axis === 'x' ? { x: value - bounds.x, y: 0 } : { x: 0, y: value - bounds.y };
-      editor.transaction('Move', () => {
-        editor.run(commands.transformNodes(editor.document, ids, translation(delta.x, delta.y)));
+      editor.docs.transaction('Move', () => {
+        editor.docs.run(commands.transformNodes(editor.docs.document, ids, translation(delta.x, delta.y)));
       });
     };
 
@@ -242,8 +243,8 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
         axis === 'width' ? scaling(factor, 1) : scaling(1, factor),
         translation(-bounds.x, -bounds.y),
       );
-      editor.transaction('Resize', () => {
-        editor.run(commands.transformNodes(editor.document, ids, matrix));
+      editor.docs.transaction('Resize', () => {
+        editor.docs.run(commands.transformNodes(editor.docs.document, ids, matrix));
       });
     };
 
@@ -254,8 +255,8 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
         rotation((degrees * Math.PI) / 180),
         translation(-center.x, -center.y),
       );
-      editor.transaction('Rotate', () => {
-        editor.run(commands.transformNodes(editor.document, ids, matrix));
+      editor.docs.transaction('Rotate', () => {
+        editor.docs.run(commands.transformNodes(editor.docs.document, ids, matrix));
       });
     };
 
@@ -266,12 +267,12 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
         axis === 'x' ? scaling(-1, 1) : scaling(1, -1),
         translation(-center.x, -center.y),
       );
-      editor.transaction('Flip', () => {
-        editor.run(commands.transformNodes(editor.document, ids, matrix));
+      editor.docs.transaction('Flip', () => {
+        editor.docs.run(commands.transformNodes(editor.docs.document, ids, matrix));
       });
     };
 
-    const single = editor.selection.size === 1 ? editor.selectedNodes()[0] : null;
+    const single = editor.selection.ids.size === 1 ? editor.selection.nodes()[0] : null;
     const angle = single ? (decompose(single.transform).rotation * 180) / Math.PI : 0;
 
     return h('section', { class: 'panel-section' }, [
@@ -291,20 +292,20 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
       ]),
       field('Opacity', numberInput(Math.round((single?.opacity ?? 1) * 100), (value) => {
         const opacity = Math.max(0, Math.min(1, value / 100));
-        editor.transaction('Change opacity', () => {
-          editor.run(commands.patchNodes(editor.document, ids, { opacity }, 'Change opacity'));
+        editor.docs.transaction('Change opacity', () => {
+          editor.docs.run(commands.patchNodes(editor.docs.document, ids, { opacity }, 'Change opacity'));
         });
       }, { min: 0, max: 100 })),
     ]);
   };
 
   const textSection = (): HTMLElement | null => {
-    const nodes = editor.selectedNodes().filter((n): n is TextNode => n.type === 'text');
+    const nodes = editor.selection.nodes().filter((n): n is TextNode => n.type === 'text');
     if (nodes.length === 0) return null;
     const first = nodes[0];
     const patch = (values: Partial<TextNode>) => {
-      editor.transaction('Change text style', () => {
-        for (const node of nodes) editor.run(commands.patchNode<TextNode>(editor.document, node.id, values, 'Change text style'));
+      editor.docs.transaction('Change text style', () => {
+        for (const node of nodes) editor.docs.run(commands.patchNode<TextNode>(editor.docs.document, node.id, values, 'Change text style'));
       });
     };
 
@@ -331,64 +332,64 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
   };
 
   const toolSection = (): HTMLElement | null => {
-    if (editor.tool === 'brush' || editor.tool === 'pencil') {
+    if (editor.tools.active === 'brush' || editor.tools.active === 'pencil') {
       return h('section', { class: 'panel-section' }, [
-        h('h3', { text: editor.tool === 'brush' ? 'Brush' : 'Pencil' }),
-        field('Width', numberInput(editor.brush.width, (width) => {
-          editor.brush = { ...editor.brush, width: Math.max(0.2, width) };
-          editor.emit('style');
+        h('h3', { text: editor.tools.active === 'brush' ? 'Brush' : 'Pencil' }),
+        field('Width', numberInput(editor.tools.brush.width, (width) => {
+          editor.tools.brush = { ...editor.tools.brush, width: Math.max(0.2, width) };
+          editor.events.emit('style');
         }, { min: 0.2, step: 0.5 })),
-        field('Smoothing', numberInput(Math.round(editor.brush.smoothing * 100), (value) => {
-          editor.brush = { ...editor.brush, smoothing: Math.max(0, Math.min(1, value / 100)) };
-          editor.emit('style');
+        field('Smoothing', numberInput(Math.round(editor.tools.brush.smoothing * 100), (value) => {
+          editor.tools.brush = { ...editor.tools.brush, smoothing: Math.max(0, Math.min(1, value / 100)) };
+          editor.events.emit('style');
         }, { min: 0, max: 100, step: 5 })),
-        field('Detail', numberInput(editor.brush.fitTolerance, (value) => {
-          editor.brush = { ...editor.brush, fitTolerance: Math.max(0, value) };
-          editor.emit('style');
+        field('Detail', numberInput(editor.tools.brush.fitTolerance, (value) => {
+          editor.tools.brush = { ...editor.tools.brush, fitTolerance: Math.max(0, value) };
+          editor.events.emit('style');
         }, { min: 0, step: 0.1 })),
-        editor.tool === 'brush'
-          ? field('Min width %', numberInput(Math.round(editor.brush.minWidthRatio * 100), (value) => {
-              editor.brush = { ...editor.brush, minWidthRatio: Math.max(1, Math.min(100, value)) / 100 };
-              editor.emit('style');
+        editor.tools.active === 'brush'
+          ? field('Min width %', numberInput(Math.round(editor.tools.brush.minWidthRatio * 100), (value) => {
+              editor.tools.brush = { ...editor.tools.brush, minWidthRatio: Math.max(1, Math.min(100, value)) / 100 };
+              editor.events.emit('style');
             }, { min: 1, max: 100, step: 5 }))
           : h('span'),
-        editor.tool === 'brush'
-          ? checkbox(editor.brush.pressureEnabled, 'Pen pressure', (pressureEnabled) => {
-              editor.brush = { ...editor.brush, pressureEnabled };
-              editor.emit('style');
+        editor.tools.active === 'brush'
+          ? checkbox(editor.tools.brush.pressureEnabled, 'Pen pressure', (pressureEnabled) => {
+              editor.tools.brush = { ...editor.tools.brush, pressureEnabled };
+              editor.events.emit('style');
             })
           : h('span'),
       ]);
     }
 
-    if (editor.tool === 'rect') {
+    if (editor.tools.active === 'rect') {
       return h('section', { class: 'panel-section' }, [
         h('h3', { text: 'Rectangle' }),
-        field('Corner radius', numberInput(editor.shapeDefaults.cornerRadius, (cornerRadius) => {
-          editor.shapeDefaults = { ...editor.shapeDefaults, cornerRadius: Math.max(0, cornerRadius) };
-          editor.emit('style');
+        field('Corner radius', numberInput(editor.tools.shape.cornerRadius, (cornerRadius) => {
+          editor.tools.shape = { ...editor.tools.shape, cornerRadius: Math.max(0, cornerRadius) };
+          editor.events.emit('style');
         }, { min: 0 })),
       ]);
     }
 
-    if (editor.tool === 'polygon' || editor.tool === 'star') {
+    if (editor.tools.active === 'polygon' || editor.tools.active === 'star') {
       return h('section', { class: 'panel-section' }, [
-        h('h3', { text: editor.tool === 'star' ? 'Star' : 'Polygon' }),
-        field(editor.tool === 'star' ? 'Points' : 'Sides', numberInput(
-          editor.tool === 'star' ? editor.shapeDefaults.starPoints : editor.shapeDefaults.polygonSides,
+        h('h3', { text: editor.tools.active === 'star' ? 'Star' : 'Polygon' }),
+        field(editor.tools.active === 'star' ? 'Points' : 'Sides', numberInput(
+          editor.tools.active === 'star' ? editor.tools.shape.starPoints : editor.tools.shape.polygonSides,
           (value) => {
             const count = Math.max(3, Math.round(value));
-            editor.shapeDefaults = editor.tool === 'star'
-              ? { ...editor.shapeDefaults, starPoints: count }
-              : { ...editor.shapeDefaults, polygonSides: count };
-            editor.emit('style');
+            editor.tools.shape = editor.tools.active === 'star'
+              ? { ...editor.tools.shape, starPoints: count }
+              : { ...editor.tools.shape, polygonSides: count };
+            editor.events.emit('style');
           },
           { min: 3 },
         )),
-        editor.tool === 'star'
-          ? field('Inner %', numberInput(Math.round(editor.shapeDefaults.starInnerRatio * 100), (value) => {
-              editor.shapeDefaults = { ...editor.shapeDefaults, starInnerRatio: Math.max(1, Math.min(100, value)) / 100 };
-              editor.emit('style');
+        editor.tools.active === 'star'
+          ? field('Inner %', numberInput(Math.round(editor.tools.shape.starInnerRatio * 100), (value) => {
+              editor.tools.shape = { ...editor.tools.shape, starInnerRatio: Math.max(1, Math.min(100, value)) / 100 };
+              editor.events.emit('style');
             }, { min: 1, max: 100, step: 5 }))
           : h('span'),
       ]);
@@ -407,24 +408,24 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
     value: VectarDocument[K],
     label: string,
   ) => {
-    const doc = editor.document;
+    const doc = editor.docs.document;
     const before = doc[key];
     if (before === value) return;
-    editor.history.execute({
+    editor.docs.history.execute({
       label,
       redo: () => {
         doc[key] = value;
-        editor.emit('document', 'view');
+        editor.events.emit('document', 'view');
       },
       undo: () => {
         doc[key] = before;
-        editor.emit('document', 'view');
+        editor.events.emit('document', 'view');
       },
     });
   };
 
   const documentSection = (): HTMLElement => {
-    const doc = editor.document;
+    const doc = editor.docs.document;
     const background = doc.background ?? { r: 255, g: 255, b: 255, a: 0 };
     const swatch = h('input', { type: 'color', class: 'color-swatch', value: toHex(background) });
     // Preview live while dragging the picker, record once on commit.
@@ -433,8 +434,8 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
       if (!parsed) return;
       beginInteraction();
       doc.background = parsed;
-      editor.markDirty();
-      editor.emit('document');
+      editor.docs.markDirty();
+      editor.events.emit('document');
     });
     swatch.addEventListener('change', () => {
       const parsed = parseColor(swatch.value);
@@ -461,17 +462,17 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
           setDocumentProperty('background', null, 'Clear background');
         }, { class: `mini-button${doc.background ? '' : ' active'}`, title: 'Transparent background' }),
       ]),
-      checkbox(editor.showGrid, 'Show grid', (showGrid) => {
-        editor.showGrid = showGrid;
-        editor.emit('view');
+      checkbox(editor.view.showGrid, 'Show grid', (showGrid) => {
+        editor.view.showGrid = showGrid;
+        editor.events.emit('view');
       }),
-      checkbox(editor.snapToGrid, 'Snap to grid', (snapToGrid) => {
-        editor.snapToGrid = snapToGrid;
-        editor.emit('view', 'status');
+      checkbox(editor.view.snapToGrid, 'Snap to grid', (snapToGrid) => {
+        editor.view.snapToGrid = snapToGrid;
+        editor.events.emit('view', 'status');
       }),
-      field('Grid size', numberInput(editor.gridSize, (gridSize) => {
-        editor.gridSize = Math.max(1, gridSize);
-        editor.emit('view');
+      field('Grid size', numberInput(editor.view.gridSize, (gridSize) => {
+        editor.view.gridSize = Math.max(1, gridSize);
+        editor.events.emit('view');
       }, { min: 1 })),
     ]);
   };
@@ -509,7 +510,7 @@ export function createPropertiesPanel(editor: Editor, container: HTMLElement): C
     clear(container);
     const sections: Array<HTMLElement | null> = [
       h('div', { class: 'panel-header' }, [
-        h('span', { text: editor.selection.size > 0 ? `${editor.selection.size} selected` : 'Properties' }),
+        h('span', { text: editor.selection.ids.size > 0 ? `${editor.selection.ids.size} selected` : 'Properties' }),
       ]),
       toolSection(),
       fillSection(),

@@ -1,6 +1,8 @@
 import { h, clear } from '../dom.ts';
-import type { Editor, ToolId } from '../editor.ts';
+
 import { Subscriptions, type Component } from '../lifecycle.ts';
+import type { EditorContext } from '../state/context.ts';
+import type { ToolId } from '../state/tool-settings.ts';
 
 type ToolButton = { id: ToolId; label: string; icon: string; shortcut: string };
 
@@ -22,7 +24,7 @@ const TOOL_BUTTONS: ToolButton[] = [
 ];
 
 /** The vertical tool strip down the left edge. */
-export function createToolbar(editor: Editor, container: HTMLElement): Component {
+export function createToolbar(editor: EditorContext, container: HTMLElement): Component {
   const render = () => {
     clear(container);
     for (const tool of TOOL_BUTTONS) {
@@ -34,12 +36,12 @@ export function createToolbar(editor: Editor, container: HTMLElement): Component
       svg.append(path);
 
       const button = h('button', {
-        class: `tool-button${editor.tool === tool.id ? ' active' : ''}`,
+        class: `tool-button${editor.tools.active === tool.id ? ' active' : ''}`,
         title: tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label,
         type: 'button',
-        'aria-pressed': editor.tool === tool.id ? 'true' : 'false',
+        'aria-pressed': editor.tools.active === tool.id ? 'true' : 'false',
       }, [svg]);
-      button.addEventListener('click', () => editor.setTool(tool.id));
+      button.addEventListener('click', () => editor.tools.setActive(tool.id));
       container.append(button);
     }
   };

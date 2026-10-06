@@ -2,8 +2,9 @@ import { button, clear, h } from '../dom.ts';
 import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
 import { isContainer, type NodeId, type SceneNode } from '../../core/model/node.ts';
-import type { Editor } from '../editor.ts';
+
 import { Subscriptions, type Component } from '../lifecycle.ts';
+import type { EditorContext } from '../state/context.ts';
 
 const TYPE_LABEL: Record<SceneNode['type'], string> = {
   layer: 'Layer', group: 'Group', path: 'Path', text: 'Text', image: 'Image',
@@ -13,13 +14,13 @@ const TYPE_LABEL: Record<SceneNode['type'], string> = {
  * The layer and object tree. Rows can be selected, renamed, reordered and
  * toggled for visibility and locking.
  */
-export function createLayersPanel(editor: Editor, container: HTMLElement): Component {
+export function createLayersPanel(editor: EditorContext, container: HTMLElement): Component {
   /** Ids of containers the user has collapsed. */
   const collapsed = new Set<NodeId>();
 
   const toggleFlag = (node: SceneNode, key: 'visible' | 'locked') => {
-    editor.transaction(key === 'visible' ? 'Toggle visibility' : 'Toggle lock', () => {
-      editor.run(commands.patchNode(editor.document, node.id, { [key]: !node[key] } as Partial<SceneNode>, 'Toggle'));
+    editor.docs.transaction(key === 'visible' ? 'Toggle visibility' : 'Toggle lock', () => {
+      editor.docs.run(commands.patchNode(editor.docs.document, node.id, { [key]: !node[key] } as Partial<SceneNode>, 'Toggle'));
     });
   };
 
@@ -30,8 +31,8 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): Compo
     input.select();
     const commit = (save: boolean) => {
       if (save && input.value.trim() !== '' && input.value !== node.name) {
-        editor.transaction('Rename', () => {
-          editor.run(commands.patchNode(editor.document, node.id, { name: input.value.trim() }, 'Rename'));
+        editor.docs.transaction('Rename', () => {
+          editor.docs.run(commands.patchNode(editor.docs.document, node.id, { name: input.value.trim() }, 'Rename'));
         });
       } else {
         render();
@@ -47,7 +48,7 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): Compo
 
   const renderRow = (node: SceneNode, depth: number, list: HTMLElement) => {
     const isLayer = node.type === 'layer';
-    const selected = editor.selection.has(node.id) || (isLayer && editor.activeLayerId === node.id);
+    const selected = editor.selection.ids.has(node.id) || (isLayer && editor.selection.activeLayerId === node.id);
     const row = h('div', {
       class: `layer-row${selected ? ' selected' : ''}${isLayer ? ' layer' : ''}`,
       draggable: 'true',
@@ -105,14 +106,14 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): Compo
 
     row.addEventListener('click', (event) => {
       if (isLayer) {
-        editor.setActiveLayer(node.id);
-        if (!event.shiftKey) editor.clearSelection();
+        editor.selection.setActiveLayer(node.id);
+        if (!event.shiftKey) editor.selection.clear();
         return;
       }
-      const layer = query.owningLayer(editor.document, node.id);
-      if (layer) editor.activeLayerId = layer.id;
-      if (event.shiftKey || event.ctrlKey) editor.toggleSelection(node.id);
-      else editor.setSelection([node.id]);
+      const layer = query.owningLayer(editor.docs.document, node.id);
+      if (layer) editor.selection.activeLayerId = layer.id;
+      if (event.shiftKey || event.ctrlKey) editor.selection.toggle(node.id);
+      else editor.selection.set([node.id]);
     });
 
     row.addEventListener('dragstart', (event) => {
@@ -142,29 +143,29 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): Compo
 
   /** Moves the dragged node onto or next to the drop target. */
   const handleDrop = (draggedId: NodeId, target: SceneNode) => {
-    const dragged = query.findNode(editor.document, draggedId);
+    const dragged = query.findNode(editor.docs.document, draggedId);
     if (!dragged) return;
 
     if (dragged.node.type === 'layer') {
       if (target.type !== 'layer') return;
-      const toIndex = editor.document.layers.findIndex((layer) => layer.id === target.id);
-      editor.transaction('Reorder layers', () => {
-        editor.run(commands.moveLayer(editor.document, draggedId, toIndex));
+      const toIndex = editor.docs.document.layers.findIndex((layer) => layer.id === target.id);
+      editor.docs.transaction('Reorder layers', () => {
+        editor.docs.run(commands.moveLayer(editor.docs.document, draggedId, toIndex));
       });
       return;
     }
 
     if (isContainer(target)) {
-      editor.transaction('Move to layer', () => {
-        editor.run(commands.reparentNodes(editor.document, [draggedId], target));
+      editor.docs.transaction('Move to layer', () => {
+        editor.docs.run(commands.reparentNodes(editor.docs.document, [draggedId], target));
       });
       return;
     }
 
-    const targetLocation = query.findNode(editor.document, target.id);
+    const targetLocation = query.findNode(editor.docs.document, target.id);
     if (!targetLocation?.parent) return;
-    editor.transaction('Reorder', () => {
-      editor.run(commands.reparentNodes(editor.document, [draggedId], targetLocation.parent!, targetLocation.index + 1));
+    editor.docs.transaction('Reorder', () => {
+      editor.docs.run(commands.reparentNodes(editor.docs.document, [draggedId], targetLocation.parent!, targetLocation.index + 1));
     });
   };
 
@@ -174,25 +175,25 @@ export function createLayersPanel(editor: Editor, container: HTMLElement): Compo
     const header = h('div', { class: 'panel-header' }, [
       h('span', { text: 'Layers' }),
       button('+', () => {
-        const added = commands.addLayer(editor.document);
-        editor.transaction('Add layer', () => editor.run(added.command));
-        editor.setActiveLayer(added.layer.id);
+        const added = commands.addLayer(editor.docs.document);
+        editor.docs.transaction('Add layer', () => editor.docs.run(added.command));
+        editor.selection.setActiveLayer(added.layer.id);
       }, { class: 'icon-button', title: 'Add layer' }),
       button('−', () => {
-        const command = commands.removeLayer(editor.document, editor.activeLayerId);
+        const command = commands.removeLayer(editor.docs.document, editor.selection.activeLayerId);
         if (!command) {
-          editor.setStatus('A document needs at least one layer');
+          editor.status.set('A document needs at least one layer');
           return;
         }
-        editor.transaction('Delete layer', () => editor.run(command));
-        editor.setActiveLayer(editor.document.layers[0]?.id ?? '');
+        editor.docs.transaction('Delete layer', () => editor.docs.run(command));
+        editor.selection.setActiveLayer(editor.docs.document.layers[0]?.id ?? '');
       }, { class: 'icon-button', title: 'Delete active layer' }),
     ]);
 
     const list = h('div', { class: 'layer-list' });
     // Top layer first, so the list reads the same way the canvas stacks.
-    for (let i = editor.document.layers.length - 1; i >= 0; i--) {
-      renderRow(editor.document.layers[i], 0, list);
+    for (let i = editor.docs.document.layers.length - 1; i >= 0; i--) {
+      renderRow(editor.docs.document.layers[i], 0, list);
     }
 
     container.append(header, list);

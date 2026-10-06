@@ -5,10 +5,11 @@ import * as commands from '../../core/model/commands.ts';
 import type { Command } from '../../core/model/history.ts';
 import * as query from '../../core/model/query.ts';
 import type { NodeId } from '../../core/model/node.ts';
-import type { Editor } from '../editor.ts';
+
 import type { CanvasView } from '../canvas.ts';
 import { CURSOR_FOR_HANDLE, drawMarquee, drawSelectionFrame, hitHandle, type HandleId } from '../overlay.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
 
 type Gesture =
   | { kind: 'none' }
@@ -27,23 +28,23 @@ const OPPOSITE: Record<Exclude<HandleId, 'rotate'>, Vec> = {
  * The default tool: click to select, drag to move, drag the frame handles to
  * scale or rotate, and drag on empty canvas for a marquee.
  */
-export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
+export function createSelectTool(editor: EditorContext, canvas: CanvasView): Tool {
   let gesture: Gesture = { kind: 'none' };
 
-  const tolerance = () => editor.viewport.toDocumentLength(4);
+  const tolerance = () => editor.view.viewport.toDocumentLength(4);
 
   /** Live preview transform applied while a gesture is in flight. */
   const applyLive = (matrix: Matrix, ids: NodeId[], previous: Command | null): Command => {
     previous?.undo();
-    const command = commands.transformNodes(editor.document, ids, matrix);
+    const command = commands.transformNodes(editor.docs.document, ids, matrix);
     command.redo();
-    editor.emit('document');
+    editor.events.emit('document');
     return command;
   };
 
   const commit = (command: Command | null, label: string) => {
     if (!command) return;
-    editor.history.push({ label, redo: command.redo, undo: command.undo });
+    editor.docs.history.push({ label, redo: command.redo, undo: command.undo });
   };
 
   const scaleMatrix = (handle: Exclude<HandleId, 'rotate'>, bounds: Rect, delta: Vec, uniform: boolean): Matrix => {
@@ -74,10 +75,10 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
 
     onPointerDown(event, point) {
       if (event.button !== 0) return;
-      const bounds = editor.selectionBounds();
+      const bounds = editor.selection.bounds();
       const screen = canvas.toScreenPoint(event);
 
-      if (bounds && editor.selection.size > 0) {
+      if (bounds && editor.selection.ids.size > 0) {
         const screenBounds = toScreenRect(editor, bounds);
         const handle = hitHandle(screenBounds, screen);
         if (handle === 'rotate') {
@@ -88,7 +89,7 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
             startAngle: Math.atan2(point.y - center.y, point.x - center.x),
             current: 0,
             command: null,
-            ids: [...editor.selection],
+            ids: [...editor.selection.ids],
           };
           return;
         }
@@ -100,32 +101,32 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
             origin: point,
             current: point,
             command: null,
-            ids: [...editor.selection],
+            ids: [...editor.selection.ids],
           };
           return;
         }
       }
 
-      const hit = query.hitTest(editor.document, point, { tolerance: tolerance(), measure: editor.measureText });
+      const hit = query.hitTest(editor.docs.document, point, { tolerance: tolerance(), measure: editor.measureText });
       if (!hit) {
-        if (!event.shiftKey) editor.clearSelection();
+        if (!event.shiftKey) editor.selection.clear();
         gesture = { kind: 'marquee', origin: point, current: point, additive: event.shiftKey };
         return;
       }
 
-      if (event.shiftKey) editor.toggleSelection(hit.id);
-      else if (!editor.selection.has(hit.id)) editor.setSelection([hit.id]);
+      if (event.shiftKey) editor.selection.toggle(hit.id);
+      else if (!editor.selection.ids.has(hit.id)) editor.selection.set([hit.id]);
 
-      if (editor.selection.size > 0) {
-        gesture = { kind: 'move', origin: point, current: point, command: null, ids: [...editor.selection] };
+      if (editor.selection.ids.size > 0) {
+        gesture = { kind: 'move', origin: point, current: point, command: null, ids: [...editor.selection.ids] };
       }
     },
 
     onPointerMove(event, point) {
       if (gesture.kind === 'none') {
-        const bounds = editor.selectionBounds();
+        const bounds = editor.selection.bounds();
         const screen = canvas.toScreenPoint(event);
-        if (bounds && editor.selection.size > 0) {
+        if (bounds && editor.selection.ids.size > 0) {
           const handle = hitHandle(toScreenRect(editor, bounds), screen);
           if (handle) {
             canvas.updateCursor(CURSOR_FOR_HANDLE[handle]);
@@ -134,7 +135,7 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
           }
         }
         canvas.updateCursor();
-        const hit = query.hitTest(editor.document, point, { tolerance: tolerance(), measure: editor.measureText });
+        const hit = query.hitTest(editor.docs.document, point, { tolerance: tolerance(), measure: editor.measureText });
         canvas.setHovered(hit?.id ?? null);
         return;
       }
@@ -147,7 +148,7 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
 
       if (gesture.kind === 'move') {
         gesture.current = point;
-        const snapped = editor.snap({
+        const snapped = editor.view.snap({
           x: gesture.current.x - gesture.origin.x,
           y: gesture.current.y - gesture.origin.y,
         });
@@ -189,9 +190,9 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
           const area = fromCorners(gesture.origin, gesture.current);
           if (area.width > 1 || area.height > 1) {
             const found = query
-              .nodesInRect(editor.document, area, { strict: true, measure: editor.measureText })
+              .nodesInRect(editor.docs.document, area, { strict: true, measure: editor.measureText })
               .map((node) => node.id);
-            editor.setSelection(gesture.additive ? [...editor.selection, ...found] : found);
+            editor.selection.set(gesture.additive ? [...editor.selection.ids, ...found] : found);
           }
           break;
         }
@@ -213,12 +214,12 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
 
     onDoubleClick(_event, point) {
       // Double-click steps inside a group to select the object under the cursor.
-      const deep = query.hitTest(editor.document, point, { tolerance: tolerance(), deep: true, measure: editor.measureText });
-      if (deep) editor.setSelection([deep.id]);
+      const deep = query.hitTest(editor.docs.document, point, { tolerance: tolerance(), deep: true, measure: editor.measureText });
+      if (deep) editor.selection.set([deep.id]);
     },
 
     onKeyDown(event) {
-      const step = event.shiftKey ? 10 : editor.snapToGrid ? editor.gridSize : 1;
+      const step = event.shiftKey ? 10 : editor.view.snapToGrid ? editor.view.gridSize : 1;
       const nudges: Record<string, Vec> = {
         ArrowLeft: { x: -step, y: 0 },
         ArrowRight: { x: step, y: 0 },
@@ -226,23 +227,23 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
         ArrowDown: { x: 0, y: step },
       };
       const delta = nudges[event.key];
-      if (!delta || editor.selection.size === 0) return false;
+      if (!delta || editor.selection.ids.size === 0) return false;
       event.preventDefault();
-      editor.transaction('Nudge', () => {
-        editor.run(commands.transformNodes(editor.document, [...editor.selection], translation(delta.x, delta.y)));
+      editor.docs.transaction('Nudge', () => {
+        editor.docs.run(commands.transformNodes(editor.docs.document, [...editor.selection.ids], translation(delta.x, delta.y)));
       });
       return true;
     },
 
     drawOverlay(ctx) {
       if (gesture.kind === 'marquee') {
-        const origin = editor.viewport.toScreen(gesture.origin);
-        const current = editor.viewport.toScreen(gesture.current);
+        const origin = editor.view.viewport.toScreen(gesture.origin);
+        const current = editor.view.viewport.toScreen(gesture.current);
         drawMarquee(ctx, fromCorners(origin, current));
         return;
       }
-      const bounds = editor.selectionBounds();
-      if (!bounds || editor.selection.size === 0) return;
+      const bounds = editor.selection.bounds();
+      if (!bounds || editor.selection.ids.size === 0) return;
       const active = gesture.kind === 'scale' ? gesture.handle : gesture.kind === 'rotate' ? 'rotate' : null;
       drawSelectionFrame(ctx, toScreenRect(editor, bounds), active);
     },
@@ -257,9 +258,9 @@ export function createSelectTool(editor: Editor, canvas: CanvasView): Tool {
 }
 
 /** Converts a document rectangle into screen pixels. */
-export function toScreenRect(editor: Editor, bounds: Rect): Rect {
-  const topLeft = editor.viewport.toScreen({ x: bounds.x, y: bounds.y });
-  const bottomRight = editor.viewport.toScreen({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
+export function toScreenRect(editor: EditorContext, bounds: Rect): Rect {
+  const topLeft = editor.view.viewport.toScreen({ x: bounds.x, y: bounds.y });
+  const bottomRight = editor.view.viewport.toScreen({ x: bounds.x + bounds.width, y: bounds.y + bounds.height });
   return {
     x: topLeft.x,
     y: topLeft.y,

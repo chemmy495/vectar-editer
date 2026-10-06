@@ -1,5 +1,5 @@
 import type { Vec } from '../core/geometry/vec.ts';
-import type { ToolId } from './editor.ts';
+import type { ToolId } from './state/tool-settings.ts';
 
 /** A tool receives pointer input in document coordinates and may draw a preview. */
 export type Tool = {

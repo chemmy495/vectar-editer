@@ -2,15 +2,17 @@ import { createTextNode, type TextNode } from '../../core/model/node.ts';
 import { cloneFill, cloneStroke } from '../../core/model/style.ts';
 import * as commands from '../../core/model/commands.ts';
 import * as query from '../../core/model/query.ts';
-import type { Editor } from '../editor.ts';
+
 import type { CanvasView } from '../canvas.ts';
 import type { Tool } from '../tool.ts';
+import type { EditorContext } from '../state/context.ts';
+import { addNodes } from '../editing.ts';
 
 /**
  * Click to place a text object, or click existing text to edit it. Editing
  * uses a transparent textarea positioned over the canvas, so IME input works.
  */
-export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
+export function createTextTool(editor: EditorContext, canvas: CanvasView): Tool {
   let editing: { node: TextNode; input: HTMLTextAreaElement; original: string; isNew: boolean } | null = null;
 
   const closeEditor = (commit: boolean) => {
@@ -24,24 +26,24 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
       node.text = original;
       if (isNew) {
         // A cancelled new object should leave nothing behind.
-        const command = commands.removeNodes(editor.document, [node.id]);
+        const command = commands.removeNodes(editor.docs.document, [node.id]);
         command.redo();
-        editor.clearSelection();
+        editor.selection.clear();
       }
-      editor.emit('document');
+      editor.events.emit('document');
       return;
     }
 
     node.text = original;
     if (isNew) {
       node.text = value;
-      editor.addNodes([node], 'Add text');
+      addNodes(editor, [node], 'Add text');
     } else if (value !== original) {
-      editor.transaction('Edit text', () => {
-        editor.run(commands.patchNode<TextNode>(editor.document, node.id, { text: value }, 'Edit text'));
+      editor.docs.transaction('Edit text', () => {
+        editor.docs.run(commands.patchNode<TextNode>(editor.docs.document, node.id, { text: value }, 'Edit text'));
       });
     }
-    editor.emit('document');
+    editor.events.emit('document');
   };
 
   /** Places a textarea over the node so typing shows in context. */
@@ -52,12 +54,12 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
     input.value = node.text;
     input.spellcheck = false;
 
-    const world = query.worldTransform(editor.document, node.id);
-    const screen = editor.viewport.toScreen({
+    const world = query.worldTransform(editor.docs.document, node.id);
+    const screen = editor.view.viewport.toScreen({
       x: world.a * node.x + world.c * node.y + world.e,
       y: world.b * node.x + world.d * node.y + world.f,
     });
-    const scale = editor.viewport.scale * Math.hypot(world.a, world.b);
+    const scale = editor.view.viewport.scale * Math.hypot(world.a, world.b);
     input.style.left = `${screen.x}px`;
     input.style.top = `${screen.y - node.fontSize * scale * 0.85}px`;
     input.style.fontSize = `${Math.max(8, node.fontSize * scale)}px`;
@@ -72,7 +74,7 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
     // Hide the underlying node so the textarea is the only visible copy.
     if (!isNew) {
       node.visible = false;
-      editor.emit('document');
+      editor.events.emit('document');
     }
 
     input.addEventListener('keydown', (event) => {
@@ -104,21 +106,21 @@ export function createTextTool(editor: Editor, canvas: CanvasView): Tool {
 
     onPointerDown(event, point) {
       if (event.button !== 0) return;
-      const hit = query.hitTest(editor.document, point, {
-        tolerance: editor.viewport.toDocumentLength(4),
+      const hit = query.hitTest(editor.docs.document, point, {
+        tolerance: editor.view.viewport.toDocumentLength(4),
         deep: true,
         measure: editor.measureText,
       });
       if (hit && hit.type === 'text') {
-        editor.setSelection([hit.id]);
+        editor.selection.set([hit.id]);
         openEditor(hit, false);
         return;
       }
 
-      const snapped = editor.snap(point);
+      const snapped = editor.view.snap(point);
       const node = createTextNode('', snapped.x, snapped.y, 'Text');
-      node.fill = cloneFill(editor.fill);
-      node.stroke = cloneStroke(editor.stroke);
+      node.fill = cloneFill(editor.tools.fill);
+      node.stroke = cloneStroke(editor.tools.stroke);
       openEditor(node, true);
     },
 

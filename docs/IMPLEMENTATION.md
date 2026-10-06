@@ -7,8 +7,8 @@
 [README.md](../README.md) にあります。
 
 - 対象: ブランチ `claude/gallant-faraday-yfrqbw` の最新コミット
-- 規模: TypeScript/CSS/HTML 合計 約 12,700 行（`src` 約 11,100 行、`test` 約 1,600 行）
-- テスト: 136 件（`node --test`）
+- 規模: TypeScript/CSS/HTML 合計 約 13,600 行（`src` 約 11,500 行、`test` 約 2,000 行）
+- テスト: 162 件（`node --test`）
 
 ---
 
@@ -113,25 +113,34 @@ vectar-editer/
 | `main/menu.ts` | 140 | アプリケーションメニュー |
 | `main/preload.ts` | 53 | `window.vectar` ブリッジ |
 | `main/ipc.ts` | 64 | チャネル名と payload 型（両プロセスが共有） |
-| `renderer/main.ts` | 265 | 起動、コマンド振り分け、ショートカット |
-| `renderer/editor.ts` | 400 | 中央の状態（文書・選択・履歴・ツール設定） |
-| `renderer/canvas.ts` | 280 | 描画面。描画ループとポインタ入力の分配 |
+| `renderer/main.ts` | 279 | 起動、コマンド振り分け、ショートカット |
+| `renderer/state/context.ts` | 57 | 各ストアをまとめた注入用の束 |
+| `renderer/state/document-store.ts` | 113 | 文書と取り消し履歴 |
+| `renderer/state/selection-store.ts` | 169 | 選択とアクティブレイヤー |
+| `renderer/state/tool-settings.ts` | 71 | 選択中のツールと新規作成時の既定値 |
+| `renderer/state/view-settings.ts` | 83 | パン・ズーム・グリッド |
+| `renderer/state/clipboard.ts` | 52 | 切り取り・コピー・貼り付け |
+| `renderer/state/status-store.ts` | 21 | ステータスバーの一時メッセージ |
+| `renderer/state/text-measure.ts` | 30 | canvas によるテキスト計測（注入される） |
+| `renderer/events.ts` | 51 | イベントバス |
+| `renderer/lifecycle.ts` | 64 | `Component` と購読の回収 |
+| `renderer/canvas.ts` | 297 | 描画面。描画ループとポインタ入力の分配 |
 | `renderer/viewport.ts` | 87 | パン・ズームの座標変換 |
-| `renderer/overlay.ts` | 247 | 選択枠・ハンドル・アンカー・グリッドの描画 |
+| `renderer/overlay.ts` | 248 | 選択枠・ハンドル・アンカー・グリッドの描画 |
 | `renderer/tool.ts` | 19 | `Tool` インタフェース |
-| `renderer/tools/select.ts` | 269 | 選択・移動・拡大縮小・回転・矩形選択 |
-| `renderer/tools/anchor.ts` | 347 | アンカーとハンドルの直接編集 |
-| `renderer/tools/pen.ts` | 149 | ベジェペン |
-| `renderer/tools/freehand.ts` | 144 | 鉛筆とブラシ |
-| `renderer/tools/shape.ts` | 146 | 図形ツール（5 種） |
-| `renderer/tools/text.ts` | 135 | テキストとその場編集 |
-| `renderer/tools/utility.ts` | 116 | ズーム・スポイト・パン |
-| `renderer/files.ts` | 518 | 開く・保存・インポート・エクスポート、各ダイアログ |
-| `renderer/editing.ts` | 154 | 高水準の編集操作（即時実行） |
-| `renderer/panels/properties.ts` | 524 | プロパティ・インスペクタ |
-| `renderer/panels/layers.ts` | 202 | レイヤ/オブジェクトのツリー |
-| `renderer/panels/toolbar.ts` | 48 | ツールストリップ |
-| `renderer/panels/statusbar.ts` | 33 | ステータスバー |
+| `renderer/tools/select.ts` | 270 | 選択・移動・拡大縮小・回転・矩形選択 |
+| `renderer/tools/anchor.ts` | 348 | アンカーとハンドルの直接編集 |
+| `renderer/tools/pen.ts` | 151 | ベジェペン |
+| `renderer/tools/freehand.ts` | 147 | 鉛筆とブラシ |
+| `renderer/tools/shape.ts` | 149 | 図形ツール（5 種） |
+| `renderer/tools/text.ts` | 137 | テキストとその場編集 |
+| `renderer/tools/utility.ts` | 117 | ズーム・スポイト・パン |
+| `renderer/files.ts` | 520 | 開く・保存・インポート・エクスポート、各ダイアログ |
+| `renderer/editing.ts` | 200 | 高水準の編集操作（即時実行） |
+| `renderer/panels/properties.ts` | 535 | プロパティ・インスペクタ |
+| `renderer/panels/layers.ts` | 206 | レイヤ/オブジェクトのツリー |
+| `renderer/panels/toolbar.ts` | 53 | ツールストリップ |
+| `renderer/panels/statusbar.ts` | 37 | ステータスバー |
 | `renderer/dom.ts` | 108 | DOM 生成ヘルパと入力部品 |
 | `renderer/dialog.ts` | 95 | モーダル・進捗・メッセージ |
 | `renderer/index.html` | 26 | シェル（CSP つき） |
@@ -202,7 +211,7 @@ core/io        →  geometry, path, model
 | --- | --- | --- |
 | `Command` | 取り消し単位（`redo` / `undo` を持つ） | `model/history.ts` で定義、`model/commands.ts` が生成 |
 | `MenuCommand` | メニュー項目を表す文字列 | `main/ipc.ts` |
-| 編集操作（即時実行） | メニューやキーから呼ぶ高水準の処理 | `renderer/editing.ts` |
+| 編集操作（即時実行） | メニューやキーから呼ぶ高水準の処理、および文書と選択の両方に跨る操作 | `renderer/editing.ts` |
 | `node` | シーングラフのオブジェクト（`SceneNode`） | `model/` 全域 |
 | `anchor` | パス上の制御点 | `path/`、`tools/anchor.ts` |
 
@@ -431,23 +440,44 @@ ipc.ts     チャネル名と payload 型（両プロセスが共有する単一
 
 ### 6.1 状態の置き場所
 
-`Editor`（`editor.ts`）が単一の情報源です。UI 部品は直接やり取りせず、
-`Editor` を読み、必要なイベントを購読します。
+状態は責務ごとに独立したストアに分かれ、`EditorContext`（`state/context.ts`）が
+それらを束ねます。コンテキストは**注入のための入れ物であって Facade ではありません**。
+振る舞いを持たず、各ストアは単体で生成・テストできます。
 
 ```
-Editor
-├── document      VectarDocument
-├── history       History
-├── viewport      Viewport
-├── selection     Set<NodeId>
-├── anchorSelection { nodeId, anchors } アンカー編集ツール用
-├── activeLayerId
-├── tool          ToolId
-├── fill / stroke / brush / shapeDefaults   新規オブジェクトの既定値
-├── showGrid / snapToGrid / gridSize
-├── filePath / dirty / statusMessage
-└── clipboard     SceneNode[]
+EditorContext
+├── events      EventBus          状態変化の通知
+├── docs        DocumentStore     文書と取り消し履歴、dirty 判定
+├── selection   SelectionStore    選択、アンカー選択、アクティブレイヤー
+├── tools       ToolSettings      選択中のツール、新規作成時の塗り/線/ブラシ/図形既定値
+├── view        ViewSettings      Viewport、グリッド、スナップ
+├── status      StatusStore       ステータスバーの一時メッセージ
+├── clipboard   Clipboard         切り取り・コピー・貼り付け
+└── measureText TextMeasurer      テキスト計測（唯一の DOM 依存。注入される）
 ```
+
+依存は一方向です。`SelectionStore` は `DocumentStore` を**読む**だけで書き込みません。
+文書と選択の両方を書き換える操作（追加・貼り付け・複製・削除）は、どちらのストアにも
+属さないので `editing.ts` の関数として置いています。
+
+テキスト計測を注入にしたのは、ここが状態層で唯一避けられない DOM 依存だからです。
+おかげでストア群は**ブラウザなしで生成でき、Node で直接テストできます**
+（`test/state.test.ts`）。
+
+### 6.1.1 UI 部品のライフサイクル
+
+購読は、誰かが解除しなければ部品より長く生き残ります。そのため全ての UI 部品は
+`Component`（`dispose()` を持つ）を実装し、購読を `Subscriptions` に集めて
+一括で解放します。
+
+```
+生成  createXxxPanel(editor, container) -> Component
+購読  editor.events.bind(subscriptions, ['document', ...], render)
+破棄  dispose() -> subscriptions.dispose()
+```
+
+`Component` という名前なのは、標準ライブラリの `Disposable` が
+`Symbol.dispose` という別の意味で使われているためです。
 
 イベントは 6 種類だけです。
 
@@ -638,10 +668,13 @@ npm test           node --test test/*.test.ts
 | `trace.test.ts` | 29 | 量子化・輪郭・簡略化・フィッティング・パイプライン |
 | `brush.test.ts` | 11 | ストローク輪郭、キャップ、筆圧、ブラー |
 | `io.test.ts` | 36 | XML、SVG 入出力、PDF 構造、ネイティブ形式 |
+| `state.test.ts` | 17 | 各ストア、クリップボード、文書と選択に跨る操作 |
+| `lifecycle.test.ts` | 9 | イベントバスと購読の解放 |
 
 テストはビルドを介さず `src` の `.ts` を直接読みます。
 
-UI とメインプロセスは単体テストの対象外です。これらは Xvfb 上で
+レンダラの状態層はテストできます（`state.test.ts`、`lifecycle.test.ts`）。
+描画とメインプロセスは単体テストの対象外です。これらは Xvfb 上で
 実際にアプリを起動し、ツールバーをクリックしてポインタイベントを
 合成して検証しました（描画、ベクター化、ノード編集、undo/redo、
 保存と再読込、3 形式のエクスポート、キャンバス外でのドラッグ解放、
@@ -668,6 +701,12 @@ dirty フラグ、スタイルドラッグの確定、終了ハンドシェイ�
 
 - **`core` に Electron / Node API を持ち込まない**。持ち込むと単体テストが
   動かなくなり、メインプロセスとレンダラの両方から使えなくなる。
+
+- **状態層（`state/`）に DOM を持ち込まない**。必要なら `text-measure.ts` と
+  同じく注入にする。持ち込むと `test/state.test.ts` が動かなくなる。
+
+- **UI 部品を作ったら `Component` を返す**。購読は必ず `Subscriptions` 経由で
+  登録し、`dispose()` で解放する。
 
 - **`Anchor` のハンドルは相対座標**。絶対座標と混同すると変換で壊れる。
 

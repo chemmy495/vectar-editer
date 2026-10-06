@@ -9,11 +9,13 @@ import { parseDocument, serializeDocument } from '../core/io/vectar.ts';
 import { renderForExport } from '../core/render/render.ts';
 import { traceImage, TRACE_PRESETS, DEFAULT_TRACE_OPTIONS, type TraceOptions } from '../core/trace/trace.ts';
 import type { ImageData8 } from '../core/trace/quantize.ts';
-import type { Editor } from './editor.ts';
+
 import type { CanvasView } from './canvas.ts';
 import { showDialog, showMessage, showProgress, modalActions } from './dialog.ts';
 import { button, checkbox, field, h, numberInput, select } from './dom.ts';
 import type { MenuCommand, MessageBoxOptions, OpenFilter, OpenedFile, SaveRequest, SaveResult } from '../main/ipc.ts';
+import type { EditorContext } from './state/context.ts';
+import { addNodes } from './editing.ts';
 
 /**
  * The preload bridge. The signatures are built from the shared IPC types so
@@ -91,13 +93,13 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 export type FileOperations = ReturnType<typeof createFileOperations>;
 
-export function createFileOperations(editor: Editor, canvas: CanvasView) {
+export function createFileOperations(editor: EditorContext, canvas: CanvasView) {
   /** Prompts to save when the document has unsaved changes. */
   const confirmDiscard = async (): Promise<boolean> => {
-    if (!editor.dirty) return true;
+    if (!editor.docs.dirty) return true;
     const answer = await window.vectar.messageBox({
       type: 'question',
-      message: `Save changes to "${editor.documentName()}"?`,
+      message: `Save changes to "${editor.docs.name}"?`,
       detail: 'Your changes will be lost if you do not save them.',
       buttons: ['Save', "Don't Save", 'Cancel'],
     });
@@ -141,9 +143,9 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
       ]);
     });
     if (!size) return;
-    editor.loadDocument(createDocument(size.width, size.height, size.name || 'Untitled'), null);
+    editor.docs.load(createDocument(size.width, size.height, size.name || 'Untitled'), null);
     canvas.zoomFit();
-    editor.setStatus('New document created');
+    editor.status.set('New document created');
   };
 
   /** Turns an opened file into a document or into nodes added to this one. */
@@ -153,11 +155,11 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
     if (extension === 'vectar') {
       const { document: parsed, warnings } = parseDocument(file.data);
       if (mode === 'open') {
-        editor.loadDocument(parsed, file.path);
+        editor.docs.load(parsed, file.path);
         canvas.zoomFit();
       } else {
         const nodes = parsed.layers.flatMap((layer) => layer.children);
-        editor.addNodes(nodes, 'Import document');
+        addNodes(editor, nodes, 'Import document');
       }
       if (warnings.length > 0) await showMessage('Opened with warnings', warnings);
       return;
@@ -166,13 +168,13 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
     if (extension === 'svg') {
       const { document: parsed, warnings } = importSvg(file.data, file.name.replace(/\.svg$/i, ''));
       if (mode === 'open') {
-        editor.loadDocument(parsed, file.path);
+        editor.docs.load(parsed, file.path);
         canvas.zoomFit();
       } else {
         // Keep the imported artwork together and centred on the canvas.
         const group = createGroupNode(parsed.layers.flatMap((layer) => layer.children), file.name);
         group.transform = parsed.layers[0]?.transform ?? group.transform;
-        editor.addNodes([group], 'Import SVG');
+        addNodes(editor, [group], 'Import SVG');
       }
       if (warnings.length > 0) await showMessage('Imported with warnings', warnings);
       return;
@@ -199,10 +201,10 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
       if (mode === 'open') {
         const doc = createDocument(decoded.pixels.width, decoded.pixels.height, file.name);
         doc.layers[0].children.push(node);
-        editor.loadDocument(doc, null);
+        editor.docs.load(doc, null);
         canvas.zoomFit();
       } else {
-        editor.addNodes([node], 'Place image');
+        addNodes(editor, [node], 'Place image');
       }
       return;
     }
@@ -233,16 +235,16 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
     if (mode === 'open') {
       const doc = createDocument(decoded.pixels.width, decoded.pixels.height, file.name);
       doc.layers[0].children.push(group);
-      editor.loadDocument(doc, null);
+      editor.docs.load(doc, null);
       canvas.zoomFit();
     } else {
       // Scale the trace down if it is much larger than the current canvas.
-      const { width, height } = documentPixelSize(editor.document);
+      const { width, height } = documentPixelSize(editor.docs.document);
       const factor = Math.min(1, width / decoded.pixels.width, height / decoded.pixels.height);
       if (factor < 1) group.transform = scaling(factor);
-      editor.addNodes([group], 'Vectorize image');
+      addNodes(editor, [group], 'Vectorize image');
     }
-    editor.setStatus(
+    editor.status.set(
       `Traced ${result.shapeCount} shapes (${result.anchorCount} anchors) in ${(result.elapsedMs / 1000).toFixed(1)}s`,
     );
   };
@@ -269,16 +271,16 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
 
   const saveDocument = async (forceDialog: boolean): Promise<boolean> => {
     const request: SaveRequest = {
-      defaultName: `${editor.documentName()}.vectar`,
+      defaultName: `${editor.docs.name}.vectar`,
       kind: 'vectar',
-      data: serializeDocument(editor.document, true),
+      data: serializeDocument(editor.docs.document, true),
       encoding: 'utf8',
-      path: forceDialog ? undefined : (editor.filePath ?? undefined),
+      path: forceDialog ? undefined : (editor.docs.filePath ?? undefined),
     };
     const result = await window.vectar.saveFile(request);
     if (!didSave(result)) return false;
-    editor.markSaved(result.path);
-    editor.setStatus(`Saved to ${result.path}`);
+    editor.docs.markSaved(result.path);
+    editor.status.set(`Saved to ${result.path}`);
     return true;
   };
 
@@ -289,7 +291,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
     quality: number,
     transparent: boolean,
   ): Promise<Blob> => {
-    const { width, height } = documentPixelSize(editor.document);
+    const { width, height } = documentPixelSize(editor.docs.document);
     const target = document.createElement('canvas');
     target.width = Math.max(1, Math.round(width * scale));
     target.height = Math.max(1, Math.round(height * scale));
@@ -298,13 +300,13 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
 
     // JPEG has no alpha channel, so it always needs an opaque backdrop.
     if (!transparent || format === 'jpeg') {
-      context.fillStyle = editor.document.background
-        ? `rgb(${editor.document.background.r}, ${editor.document.background.g}, ${editor.document.background.b})`
+      context.fillStyle = editor.docs.document.background
+        ? `rgb(${editor.docs.document.background.r}, ${editor.docs.document.background.g}, ${editor.docs.document.background.b})`
         : '#ffffff';
       context.fillRect(0, 0, target.width, target.height);
     }
 
-    renderForExport(context, editor.document, scale, {
+    renderForExport(context, editor.docs.document, scale, {
       drawBackground: transparent && format !== 'jpeg' ? false : true,
       resolveImage: (href) => {
         const image = new Image();
@@ -324,28 +326,28 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
     const choice = await showExportDialog(editor);
     if (!choice) return;
 
-    const baseName = editor.documentName().replace(/\.[^.]+$/, '');
+    const baseName = editor.docs.name.replace(/\.[^.]+$/, '');
 
     if (choice.format === 'svg') {
       const result = await window.vectar.saveFile({
         defaultName: `${baseName}.svg`,
         kind: 'svg',
-        data: exportSvg(editor.document, { includeBackground: choice.includeBackground }),
+        data: exportSvg(editor.docs.document, { includeBackground: choice.includeBackground }),
         encoding: 'utf8',
       });
-      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.status.set(`Exported ${result.path}`);
       return;
     }
 
     if (choice.format === 'pdf') {
-      const bytes = exportPdf(editor.document, { pointsPerPixel: choice.scale });
+      const bytes = exportPdf(editor.docs.document, { pointsPerPixel: choice.scale });
       const result = await window.vectar.saveFile({
         defaultName: `${baseName}.pdf`,
         kind: 'pdf',
         data: bytesToBase64(bytes),
         encoding: 'base64',
       });
-      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.status.set(`Exported ${result.path}`);
       return;
     }
 
@@ -367,7 +369,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
         data: bytesToBase64(bytes),
         encoding: 'base64',
       });
-      if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
+      if (didSave(result)) editor.status.set(`Exported ${result.path}`);
       return;
     }
 
@@ -378,7 +380,7 @@ export function createFileOperations(editor: Editor, canvas: CanvasView) {
       data: await blobToBase64(blob),
       encoding: 'base64',
     });
-    if (didSave(result)) editor.setStatus(`Exported ${result.path}`);
+    if (didSave(result)) editor.status.set(`Exported ${result.path}`);
   };
 
   return {
@@ -457,7 +459,7 @@ type ExportChoice = {
   includeBackground: boolean;
 };
 
-function showExportDialog(editor: Editor): Promise<ExportChoice | null> {
+function showExportDialog(editor: EditorContext): Promise<ExportChoice | null> {
   return showDialog<ExportChoice>(
     'Export',
     (close) => {
@@ -468,7 +470,7 @@ function showExportDialog(editor: Editor): Promise<ExportChoice | null> {
         transparent: false,
         includeBackground: true,
       };
-      const { width, height } = documentPixelSize(editor.document);
+      const { width, height } = documentPixelSize(editor.docs.document);
       const sizeLabel = h('p', { class: 'modal-note', text: '' });
       const updateSize = () => {
         sizeLabel.textContent =
