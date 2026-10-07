@@ -1,0 +1,206 @@
+import { button, clear, h } from '../dom.ts';
+import * as commands from '../../core/model/commands.ts';
+import * as query from '../../core/model/query.ts';
+import { isContainer, type NodeId, type SceneNode } from '../../core/model/node.ts';
+
+import { Subscriptions, type Component } from '../lifecycle.ts';
+import type { EditorContext } from '../state/context.ts';
+
+const TYPE_LABEL: Record<SceneNode['type'], string> = {
+  layer: 'Layer', group: 'Group', path: 'Path', text: 'Text', image: 'Image',
+};
+
+/**
+ * The layer and object tree. Rows can be selected, renamed, reordered and
+ * toggled for visibility and locking.
+ */
+export function createLayersPanel(editor: EditorContext, container: HTMLElement): Component {
+  /** Ids of containers the user has collapsed. */
+  const collapsed = new Set<NodeId>();
+
+  const toggleFlag = (node: SceneNode, key: 'visible' | 'locked') => {
+    editor.docs.transaction(key === 'visible' ? 'Toggle visibility' : 'Toggle lock', () => {
+      editor.docs.run(commands.patchNode(editor.docs.document, node.id, { [key]: !node[key] } as Partial<SceneNode>, 'Toggle'));
+    });
+  };
+
+  const startRename = (node: SceneNode, label: HTMLElement) => {
+    const input = h('input', { class: 'layer-rename', value: node.name });
+    label.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = (save: boolean) => {
+      if (save && input.value.trim() !== '' && input.value !== node.name) {
+        editor.docs.transaction('Rename', () => {
+          editor.docs.run(commands.patchNode(editor.docs.document, node.id, { name: input.value.trim() }, 'Rename'));
+        });
+      } else {
+        render();
+      }
+    };
+    input.addEventListener('blur', () => commit(true));
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') commit(true);
+      else if (event.key === 'Escape') commit(false);
+    });
+  };
+
+  const renderRow = (node: SceneNode, depth: number, list: HTMLElement) => {
+    const isLayer = node.type === 'layer';
+    const selected = editor.selection.ids.has(node.id) || (isLayer && editor.selection.activeLayerId === node.id);
+    const row = h('div', {
+      class: `layer-row${selected ? ' selected' : ''}${isLayer ? ' layer' : ''}`,
+      draggable: 'true',
+      'data-id': node.id,
+    });
+    row.style.paddingLeft = `${6 + depth * 14}px`;
+
+    if (isContainer(node) && node.children.length > 0) {
+      const twisty = h('button', {
+        class: 'layer-twisty',
+        type: 'button',
+        text: collapsed.has(node.id) ? '▸' : '▾',
+        title: collapsed.has(node.id) ? 'Expand' : 'Collapse',
+      });
+      twisty.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (collapsed.has(node.id)) collapsed.delete(node.id);
+        else collapsed.add(node.id);
+        render();
+      });
+      row.append(twisty);
+    } else {
+      row.append(h('span', { class: 'layer-twisty-spacer' }));
+    }
+
+    const visibility = h('button', {
+      class: `layer-flag${node.visible ? '' : ' off'}`,
+      type: 'button',
+      title: node.visible ? 'Hide' : 'Show',
+      text: node.visible ? '◉' : '○',
+    });
+    visibility.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleFlag(node, 'visible');
+    });
+
+    const lock = h('button', {
+      class: `layer-flag${node.locked ? ' on' : ''}`,
+      type: 'button',
+      title: node.locked ? 'Unlock' : 'Lock',
+      text: node.locked ? '■' : '□',
+    });
+    lock.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleFlag(node, 'locked');
+    });
+
+    const label = h('span', { class: 'layer-name', text: node.name, title: `${TYPE_LABEL[node.type]}: ${node.name}` });
+    label.addEventListener('dblclick', (event) => {
+      event.stopPropagation();
+      startRename(node, label);
+    });
+
+    row.append(visibility, lock, label, h('span', { class: 'layer-type', text: TYPE_LABEL[node.type] }));
+
+    row.addEventListener('click', (event) => {
+      if (isLayer) {
+        editor.selection.setActiveLayer(node.id);
+        if (!event.shiftKey) editor.selection.clear();
+        return;
+      }
+      const layer = query.owningLayer(editor.docs.document, node.id);
+      if (layer) editor.selection.activeLayerId = layer.id;
+      if (event.shiftKey || event.ctrlKey) editor.selection.toggle(node.id);
+      else editor.selection.set([node.id]);
+    });
+
+    row.addEventListener('dragstart', (event) => {
+      event.dataTransfer?.setData('text/plain', node.id);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+    row.addEventListener('drop', (event) => {
+      event.preventDefault();
+      row.classList.remove('drop-target');
+      const draggedId = event.dataTransfer?.getData('text/plain');
+      if (!draggedId || draggedId === node.id) return;
+      handleDrop(draggedId, node);
+    });
+
+    list.append(row);
+
+    if (isContainer(node) && !collapsed.has(node.id)) {
+      // Children are listed top-most first, matching what the canvas shows.
+      for (let i = node.children.length - 1; i >= 0; i--) renderRow(node.children[i], depth + 1, list);
+    }
+  };
+
+  /** Moves the dragged node onto or next to the drop target. */
+  const handleDrop = (draggedId: NodeId, target: SceneNode) => {
+    const dragged = query.findNode(editor.docs.document, draggedId);
+    if (!dragged) return;
+
+    if (dragged.node.type === 'layer') {
+      if (target.type !== 'layer') return;
+      const toIndex = editor.docs.document.layers.findIndex((layer) => layer.id === target.id);
+      editor.docs.transaction('Reorder layers', () => {
+        editor.docs.run(commands.moveLayer(editor.docs.document, draggedId, toIndex));
+      });
+      return;
+    }
+
+    if (isContainer(target)) {
+      editor.docs.transaction('Move to layer', () => {
+        editor.docs.run(commands.reparentNodes(editor.docs.document, [draggedId], target));
+      });
+      return;
+    }
+
+    const targetLocation = query.findNode(editor.docs.document, target.id);
+    if (!targetLocation?.parent) return;
+    editor.docs.transaction('Reorder', () => {
+      editor.docs.run(commands.reparentNodes(editor.docs.document, [draggedId], targetLocation.parent!, targetLocation.index + 1));
+    });
+  };
+
+  const render = () => {
+    clear(container);
+
+    const header = h('div', { class: 'panel-header' }, [
+      h('span', { text: 'Layers' }),
+      button('+', () => {
+        const added = commands.addLayer(editor.docs.document);
+        editor.docs.transaction('Add layer', () => editor.docs.run(added.command));
+        editor.selection.setActiveLayer(added.layer.id);
+      }, { class: 'icon-button', title: 'Add layer' }),
+      button('−', () => {
+        const command = commands.removeLayer(editor.docs.document, editor.selection.activeLayerId);
+        if (!command) {
+          editor.status.set('A document needs at least one layer');
+          return;
+        }
+        editor.docs.transaction('Delete layer', () => editor.docs.run(command));
+        editor.selection.setActiveLayer(editor.docs.document.layers[0]?.id ?? '');
+      }, { class: 'icon-button', title: 'Delete active layer' }),
+    ]);
+
+    const list = h('div', { class: 'layer-list' });
+    // Top layer first, so the list reads the same way the canvas stacks.
+    for (let i = editor.docs.document.layers.length - 1; i >= 0; i--) {
+      renderRow(editor.docs.document.layers[i], 0, list);
+    }
+
+    container.append(header, list);
+  };
+
+  const subscriptions = new Subscriptions();
+  editor.events.bind(subscriptions, ['document', 'selection'], render);
+  render();
+  return { dispose: () => subscriptions.dispose() };
+}
